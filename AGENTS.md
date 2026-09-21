@@ -74,16 +74,18 @@ Aircraft only (design 9):
 6. Configuration from environment variables only (README).
 7. A Docker image, `ghcr.io/arizonameshtasticcommunity/rf-agent`.
 
-The language is not fixed yet. Python 3.13 with `aiomqtt` matches Sonoran
-and lets the tests reuse `tools/validate.py` directly; propose another
-only with a reason.
+The language is Python 3.13 with `aiomqtt`. It matches Sonoran and lets
+the tests reuse `tools/validate.py` directly. The package is
+`src/rf_agent`: one module per reader, `thinning.py`, `publisher.py`.
 
 ## 5. Testing
 
-- Readers are tested with recorded decoder output: a Beast capture, an
+- Readers are tested with decoder output: a Beast capture, an
   `aircraft.json` file, dump978 lines. Record from a real receiver and
-  shift every position before it is committed, so no real station is in
-  the repository.
+  shift every position with `tools/shift_capture.py` before it is
+  committed, so no real station is in the repository. Until a recording
+  is committed, `tests/fixtures/make_captures.py` writes the captures,
+  for invented aircraft, in each decoder's exact format.
 - Thinning has unit tests that count points in and out.
 - Every message a test builds is checked against the schema.
 - Do not run heavy tests on a machine that also serves production.
