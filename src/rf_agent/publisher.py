@@ -1,0 +1,234 @@
+"""Publish to the broker: batches of observations, and the heartbeat.
+
+Topics (design 4.1), for this station only:
+
+    rf/v1/<station>/<kind>   batches of at most 100 points, QoS 0
+    rf/v1/<station>/status   the heartbeat, every 60 s, retained, QoS 1
+
+Points wait in the `Outbox` between flushes, and while the broker is
+away. The outbox is bounded: when it is full the oldest points go
+first, and the log says how many. A point lost that way is replaced by
+the next one 20 s later, the same as a lost QoS 0 message.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import ssl
+import time
+from collections import deque
+from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager
+from typing import Any, Protocol
+
+import aiomqtt
+
+from rf_agent import __version__
+from rf_agent.config import Config
+from rf_agent.geo import round_position
+from rf_agent.messages import MAX_OBS, Counts, Observation, batch, status
+
+logger = logging.getLogger(__name__)
+
+HEARTBEAT_S = 60.0
+FLUSH_S = 2.0
+# About ten minutes of a busy site.
+MAX_QUEUED = 10_000
+BACKOFF_MAX_S = 60.0
+
+
+class Client(Protocol):
+    async def publish(
+        self, topic: str, payload: bytes, qos: int = 0, retain: bool = False
+    ) -> None: ...
+
+
+def topic(station: str, name: str) -> str:
+    return f"rf/v1/{station}/{name}"
+
+
+class Outbox:
+    """Points waiting to be sent, per kind, oldest first."""
+
+    def __init__(self, limit: int = MAX_QUEUED) -> None:
+        self.limit = limit
+        self._queues: dict[str, deque[Observation]] = {}
+        self.overflowed = 0
+
+    def __len__(self) -> int:
+        return sum(len(q) for q in self._queues.values())
+
+    def add(self, obs: Observation) -> None:
+        queue = self._queues.setdefault(obs.kind, deque())
+        queue.append(obs)
+        if len(self) > self.limit:
+            # Drop from the longest queue, so one busy kind cannot
+            # push out another.
+            longest = max(self._queues.values(), key=len)
+            longest.popleft()
+            self.overflowed += 1
+
+    def take(self, kind: str) -> list[Observation]:
+        """Remove and return up to MAX_OBS points of one kind."""
+        queue = self._queues.get(kind)
+        if not queue:
+            return []
+        return [queue.popleft() for _ in range(min(MAX_OBS, len(queue)))]
+
+    def put_back(self, kind: str, obs: list[Observation]) -> None:
+        """Return points that could not be sent, at the front."""
+        queue = self._queues.setdefault(kind, deque())
+        queue.extendleft(reversed(obs))
+
+    def kinds(self) -> list[str]:
+        return [kind for kind, queue in self._queues.items() if queue]
+
+
+def encode(message: dict[str, Any]) -> bytes:
+    return json.dumps(message, separators=(",", ":")).encode()
+
+
+class Publisher:
+    """Send what the outbox holds, and the heartbeat, over one connection."""
+
+    def __init__(
+        self,
+        config: Config,
+        outbox: Outbox,
+        counts: Counts,
+        clock: Callable[[], float] = time.time,
+    ) -> None:
+        self.config = config
+        self.outbox = outbox
+        self.counts = counts
+        self.clock = clock
+        self.position = (
+            round_position(*config.station, config.precision_m) if config.station else None
+        )
+        self._reported_overflow = 0
+
+    async def flush(self, client: Client) -> int:
+        """Publish every waiting point, in batches. Returns how many were sent.
+
+        A failed publish puts its points back and raises, so the next
+        connection sends them.
+        """
+        sent = 0
+        station = self.config.station_id
+        for kind in self.outbox.kinds():
+            while chunk := self.outbox.take(kind):
+                payload = encode(batch(station, kind, chunk, self.clock()))
+                try:
+                    await client.publish(topic(station, kind), payload, qos=0, retain=False)
+                except BaseException:
+                    self.outbox.put_back(kind, chunk)
+                    raise
+                sent += len(chunk)
+                self.counts.sent += len(chunk)
+        if self.outbox.overflowed != self._reported_overflow:
+            logger.warning(
+                "outbox full: %d points dropped oldest first while the broker was away",
+                self.outbox.overflowed - self._reported_overflow,
+            )
+            self._reported_overflow = self.outbox.overflowed
+        return sent
+
+    def heartbeat_message(self, counts: Counts) -> dict[str, Any]:
+        return status(
+            self.config.station_id,
+            self.clock(),
+            kinds=self.config.kinds,
+            counts=counts,
+            agent_version=__version__,
+            position=self.position,
+            precision_m=self.config.precision_m,
+        )
+
+    async def heartbeat(self, client: Client) -> Counts:
+        """Publish the heartbeat with the counts since the last one."""
+        counts = self.counts.take()
+        payload = encode(self.heartbeat_message(counts))
+        try:
+            await client.publish(
+                topic(self.config.station_id, "status"), payload, qos=1, retain=True
+            )
+        except BaseException:
+            self.counts.give_back(counts)
+            raise
+        logger.info(
+            "heartbeat: heard %d, sent %d, thinned %d, waiting %d",
+            counts.heard,
+            counts.sent,
+            counts.dropped,
+            len(self.outbox),
+        )
+        return counts
+
+    async def serve(self, client: Client, stop: asyncio.Event) -> None:
+        """Flush every FLUSH_S and beat every HEARTBEAT_S until `stop` is set."""
+        next_beat = 0.0
+        while True:
+            await self.flush(client)
+            # A last heartbeat on the way out, so its counts are not lost.
+            if time.monotonic() >= next_beat or stop.is_set():
+                await self.heartbeat(client)
+                next_beat = time.monotonic() + HEARTBEAT_S
+            if stop.is_set():
+                return
+            try:
+                await asyncio.wait_for(stop.wait(), FLUSH_S)
+            except TimeoutError:
+                pass
+
+
+def make_client(config: Config) -> aiomqtt.Client:
+    """A client for the broker, over TLS. It only connects out."""
+    return aiomqtt.Client(
+        hostname=config.broker_host,
+        port=config.broker_port,
+        username=config.broker_user or None,
+        password=config.broker_pass or None,
+        identifier=f"rf-agent-{config.station_id}",
+        protocol=aiomqtt.ProtocolVersion.V311,
+        clean_session=True,
+        keepalive=60,
+        tls_context=ssl.create_default_context(),
+    )
+
+
+async def run(
+    publisher: Publisher,
+    stop: asyncio.Event,
+    connect: Callable[[Config], AbstractAsyncContextManager[Any]] = make_client,
+    first_delay: float = 1.0,
+) -> None:
+    """Keep a connection to the broker and serve it, until `stop` is set.
+
+    A broker that is down or refuses the login is retried with backoff,
+    up to a minute apart. The agent never exits over it.
+    """
+    delay = first_delay
+    while True:
+        try:
+            async with connect(publisher.config) as client:
+                logger.info(
+                    "connected to broker %s:%d",
+                    publisher.config.broker_host,
+                    publisher.config.broker_port,
+                )
+                delay = first_delay
+                await publisher.serve(client, stop)
+                return
+        except (aiomqtt.MqttError, OSError) as exc:
+            logger.warning("broker: %s; retry in %.0f s", exc, delay)
+        except Exception:
+            logger.exception("broker connection failed; retry in %.0f s", delay)
+        if stop.is_set():
+            return
+        try:
+            await asyncio.wait_for(stop.wait(), delay)
+        except TimeoutError:
+            pass
+        delay = min(delay * 2, BACKOFF_MAX_S)
