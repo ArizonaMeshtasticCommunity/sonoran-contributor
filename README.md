@@ -144,14 +144,15 @@ changes, never edit it by hand.
 
 1. **Aircraft** — ADS-B and UAT readers, thinning, heartbeat. Sonoran's side is built.
 2. **The 900 MHz band** — `rf-sweep` and the spectrum summary.
-3. **UAT and APRS** — the APRS reader off the air.
+3. **APRS** — the APRS reader, off the air.
 4. **Radiosondes and weather sensors** — two more readers and the allow-lists.
 
 ## 📚 Documentation
 
 | Document | What it covers |
 |----------|----------------|
-| [Sonoran `docs/design/rf-map.md`](https://github.com/ArizonaMeshtasticCommunity/beta-sonoran/blob/main/docs/design/rf-map.md) | The full design: scope, transport, storage, capacity, privacy |
+| [`docs/DESIGN.md`](docs/DESIGN.md) | The full design: scope, transport, storage, capacity, privacy. A mirror of Sonoran's `docs/design/rf-map.md`; sections 3 and 4 are owned here |
+| [`AGENTS.md`](AGENTS.md) | The rules for anyone, person or agent, working in this repository |
 | [`schema/rf-message-v1.schema.json`](schema/rf-message-v1.schema.json) | The message contract |
 | [`examples/`](examples) | One valid message of each kind |
 
