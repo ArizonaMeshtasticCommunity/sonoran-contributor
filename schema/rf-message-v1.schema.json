@@ -1,0 +1,317 @@
+{
+  "$defs": {
+    "Batch": {
+      "description": "A batch of observations of one kind, from one station.",
+      "properties": {
+        "kind": {
+          "enum": [
+            "adsb",
+            "uat",
+            "aprs",
+            "sonde",
+            "ism"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "obs": {
+          "items": {
+            "$ref": "#/$defs/Observation"
+          },
+          "maxItems": 100,
+          "title": "Obs",
+          "type": "array"
+        },
+        "sent": {
+          "format": "date-time",
+          "title": "Sent",
+          "type": "string"
+        },
+        "station": {
+          "pattern": "^[a-z0-9-]{3,32}$",
+          "title": "Station",
+          "type": "string"
+        },
+        "v": {
+          "const": 1,
+          "title": "V",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "v",
+        "station",
+        "kind",
+        "sent",
+        "obs"
+      ],
+      "title": "Batch",
+      "type": "object"
+    },
+    "Counts": {
+      "description": "What the agent did since its last heartbeat.",
+      "properties": {
+        "dropped": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Dropped",
+          "type": "integer"
+        },
+        "heard": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Heard",
+          "type": "integer"
+        },
+        "sent": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Sent",
+          "type": "integer"
+        }
+      },
+      "title": "Counts",
+      "type": "object"
+    },
+    "Observation": {
+      "description": "One thing heard, at one moment, by one station.",
+      "properties": {
+        "alt_m": {
+          "anyOf": [
+            {
+              "maximum": 60000,
+              "minimum": -500,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Alt M"
+        },
+        "alt_ref": {
+          "anyOf": [
+            {
+              "enum": [
+                "baro",
+                "geom"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Alt Ref"
+        },
+        "gs_kn": {
+          "anyOf": [
+            {
+              "maximum": 2000,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Gs Kn"
+        },
+        "id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "lat": {
+          "maximum": 90,
+          "minimum": -90,
+          "title": "Lat",
+          "type": "number"
+        },
+        "lon": {
+          "maximum": 180,
+          "minimum": -180,
+          "title": "Lon",
+          "type": "number"
+        },
+        "meta": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Meta"
+        },
+        "rssi_db": {
+          "anyOf": [
+            {
+              "maximum": 50,
+              "minimum": -200,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rssi Db"
+        },
+        "t": {
+          "format": "date-time",
+          "title": "T",
+          "type": "string"
+        },
+        "track_deg": {
+          "anyOf": [
+            {
+              "maximum": 360,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Track Deg"
+        }
+      },
+      "required": [
+        "id",
+        "t",
+        "lat",
+        "lon"
+      ],
+      "title": "Observation",
+      "type": "object"
+    },
+    "Status": {
+      "description": "The heartbeat, published retained on `rf/v1/<station>/status`.",
+      "properties": {
+        "agent_version": {
+          "anyOf": [
+            {
+              "maxLength": 64,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Agent Version"
+        },
+        "counts": {
+          "$ref": "#/$defs/Counts",
+          "default": {
+            "dropped": 0,
+            "heard": 0,
+            "sent": 0
+          }
+        },
+        "kinds": {
+          "default": [],
+          "items": {
+            "enum": [
+              "adsb",
+              "uat",
+              "aprs",
+              "sonde",
+              "ism"
+            ],
+            "type": "string"
+          },
+          "title": "Kinds",
+          "type": "array"
+        },
+        "lat": {
+          "anyOf": [
+            {
+              "maximum": 90,
+              "minimum": -90,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Lat"
+        },
+        "lon": {
+          "anyOf": [
+            {
+              "maximum": 180,
+              "minimum": -180,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Lon"
+        },
+        "precision_m": {
+          "anyOf": [
+            {
+              "maximum": 100000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Precision M"
+        },
+        "sent": {
+          "format": "date-time",
+          "title": "Sent",
+          "type": "string"
+        },
+        "station": {
+          "pattern": "^[a-z0-9-]{3,32}$",
+          "title": "Station",
+          "type": "string"
+        },
+        "v": {
+          "const": 1,
+          "title": "V",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "v",
+        "station",
+        "sent"
+      ],
+      "title": "Status",
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Published by rf-agent. Observations go to rf/v1/<station>/<kind>, the heartbeat to rf/v1/<station>/status, retained. See docs/design/rf-map.md section 4. Generated from sonoran/rf/schema.py.",
+  "else": {
+    "$ref": "#/$defs/Status"
+  },
+  "if": {
+    "required": [
+      "obs"
+    ]
+  },
+  "then": {
+    "$ref": "#/$defs/Batch"
+  },
+  "title": "rf-agent message, version 1"
+}

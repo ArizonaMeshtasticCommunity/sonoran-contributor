@@ -1,0 +1,27 @@
+{
+  "v": 1,
+  "station": "tempe-roof",
+  "kind": "adsb",
+  "sent": "2026-09-22T18:00:00Z",
+  "obs": [
+    {
+      "id": "a1b2c3",
+      "t": "2026-09-22T17:59:58.4Z",
+      "lat": 33.51,
+      "lon": -112.02,
+      "alt_m": 3350,
+      "alt_ref": "baro",
+      "gs_kn": 212,
+      "track_deg": 84,
+      "rssi_db": -24.1,
+      "meta": { "callsign": "SWA1234", "squawk": "1200", "category": "A3" }
+    },
+    {
+      "id": "~0f1e2d",
+      "t": "2026-09-22T17:59:59.1Z",
+      "lat": 33.3,
+      "lon": -111.7,
+      "rssi_db": -31.5
+    }
+  ]
+}

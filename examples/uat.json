@@ -1,0 +1,20 @@
+{
+  "v": 1,
+  "station": "tempe-roof",
+  "kind": "uat",
+  "sent": "2026-09-22T18:00:00Z",
+  "obs": [
+    {
+      "id": "abc123",
+      "t": "2026-09-22T17:59:57Z",
+      "lat": 33.62,
+      "lon": -111.91,
+      "alt_m": 1200,
+      "alt_ref": "geom",
+      "gs_kn": 98,
+      "track_deg": 270,
+      "rssi_db": -18.0,
+      "meta": { "callsign": "N123AB" }
+    }
+  ]
+}

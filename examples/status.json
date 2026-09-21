@@ -1,0 +1,11 @@
+{
+  "v": 1,
+  "station": "tempe-roof",
+  "sent": "2026-09-22T18:00:00Z",
+  "lat": 33.42,
+  "lon": -111.94,
+  "precision_m": 1000,
+  "kinds": ["adsb", "uat"],
+  "agent_version": "0.1.0",
+  "counts": { "heard": 912, "sent": 64, "dropped": 848 }
+}
