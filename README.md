@@ -41,7 +41,7 @@ traffic control and not for navigation.
 member's site (one or more SDRs)                       Sonoran host
 ┌──────────────────────────────────────┐
 │ readsb ──:30005──┐                   │
-│ dump978 ─:30978──┤                   │   MQTT over TLS
+│ dump978 ─:30979──┤                   │   MQTT over TLS
 │ direwolf ─:8001──┼──► rf-agent ──────┼──────────────► broker
 │ rtl_433 ──UDP────┤   (read-only)     │                  │
 │ auto_rx ──UDP────┘                   │                  ▼

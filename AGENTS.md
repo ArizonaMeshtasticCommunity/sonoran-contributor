@@ -66,7 +66,7 @@ check this, not only the examples.
 Aircraft only (design 9):
 
 1. Readers for readsb Beast (TCP 30005) or `aircraft.json`, and for
-   dump978 JSON (TCP 30978).
+   dump978 JSON (TCP 30979).
 2. Normalise to the batch in the contract. ICAO address in lower case.
 3. Thinning per aircraft, plus the first and last point of each visit.
 4. Batches of at most 100 observations, QoS 0.

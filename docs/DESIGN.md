@@ -74,7 +74,7 @@ list of gateways (`AGENTS.md` 9.5.1).
 member's site (one or more SDRs)                       sonoran host
 ┌──────────────────────────────────────┐
 │ readsb ──:30005──┐                   │
-│ dump978 ─:30978──┤                   │   MQTT over TLS
+│ dump978 ─:30979──┤                   │   MQTT over TLS
 │ direwolf ─:8001──┼──► rf-agent ──────┼──────────────► broker
 │ rtl_433 ──UDP────┤   (read-only)     │                  │
 │ auto_rx ──UDP────┘                   │                  ▼
@@ -110,7 +110,7 @@ dongle feeds five aggregators today.
 | Decoder | What `rf-agent` reads |
 |---|---|
 | `readsb`, `dump1090-fa` | Beast on TCP 30005, or `aircraft.json` over HTTP |
-| `dump978-fa` | JSON on TCP 30978 |
+| `dump978-fa` | JSON on TCP 30979 |
 | `direwolf` | KISS on TCP 8001 (several clients allowed) |
 | `rtl_433` | JSON over UDP, or its own MQTT output |
 | `radiosonde_auto_rx` | its UDP summary broadcast, port 55672 |
@@ -132,7 +132,7 @@ services:
       BROKER_URL: mqtts://broker.example:8883
       BROKER_USER: tempe-roof
       BROKER_PASS: ${RF_AGENT_PASS}
-      SOURCES: adsb=beast://readsb:30005,uat=tcp://dump978:30978
+      SOURCES: adsb=beast://readsb:30005,uat=tcp://dump978:30979
       STATION_LAT: "33.42"
       STATION_LON: "-111.94"
       STATION_PRECISION_M: "1000"
