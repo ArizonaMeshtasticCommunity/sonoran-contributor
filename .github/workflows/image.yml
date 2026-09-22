@@ -1,6 +1,6 @@
 name: Image
 
-# Publishes ghcr.io/arizonameshtasticcommunity/rf-agent.
+# Publishes ghcr.io/arizonameshtasticcommunity/rf-agent and rf-sweep.
 #
 # A tag `v1.2.3` publishes `1.2.3`, `1.2` and `1`, so a member who runs
 # `rf-agent:1` gets every compatible release. `main` publishes `main`.
@@ -17,6 +17,13 @@ permissions:
 jobs:
   image:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - name: rf-agent
+            file: Dockerfile
+          - name: rf-sweep
+            file: Dockerfile.sweep
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3
@@ -29,7 +36,7 @@ jobs:
       - id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/arizonameshtasticcommunity/rf-agent
+          images: ghcr.io/arizonameshtasticcommunity/${{ matrix.name }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -38,6 +45,7 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: .
+          file: ${{ matrix.file }}
           platforms: linux/amd64,linux/arm64,linux/arm/v7
           push: true
           tags: ${{ steps.meta.outputs.tags }}

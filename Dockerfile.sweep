@@ -1,0 +1,37 @@
+# syntax=docker/dockerfile:1
+
+# rf-sweep: rtl_power on a dongle of its own, served to rf-agent.
+#
+# Built like the agent's image: the lock is exported on the build
+# machine and installed hash-checked. See Dockerfile for why.
+FROM --platform=$BUILDPLATFORM ghcr.io/astral-sh/uv:0.10.1@sha256:452e02b117acd2d4eb3ba81a607bed9733b101b6c49492e352b1973463389012 AS lock
+WORKDIR /src
+COPY pyproject.toml uv.lock ./
+RUN ["/uv", "export", "--frozen", "--no-dev", "--no-emit-project", \
+     "--format", "requirements-txt", "-o", "/requirements.txt"]
+
+FROM python:3.13-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# rtl_power, from Debian. It is the only program here that opens a device.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends rtl-sdr \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY --from=lock /requirements.txt /tmp/requirements.txt
+RUN pip install --require-hashes -r /tmp/requirements.txt && rm /tmp/requirements.txt
+COPY pyproject.toml README.md ./
+COPY src ./src
+RUN pip install --no-deps . && rm -rf /app/src
+
+# It runs as root inside the container, because the USB device node it
+# is given is usually writable by root only. It is not privileged: it
+# gets the USB bus and nothing else, and opens only the dongle whose
+# serial it is told. It listens on SWEEP_PORT for the agent, inside the
+# compose network; do not publish that port on the host.
+ENTRYPOINT ["rf-sweep"]

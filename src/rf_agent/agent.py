@@ -26,6 +26,7 @@ from rf_agent.messages import Counts, Observation
 from rf_agent.publisher import Outbox, Publisher
 from rf_agent.publisher import run as run_publisher
 from rf_agent.sources import Handler, poll, read_stream
+from rf_agent.spectrum import SpectrumSummary
 from rf_agent.thinning import Thinner
 
 logger = logging.getLogger("rf_agent")
@@ -41,6 +42,7 @@ class Pipeline:
         self.counts = Counts()
         self.thinner = Thinner(config.adsb_interval_s, self.counts)
         self.outbox = Outbox()
+        self.summaries: list[SpectrumSummary] = []
 
     def accept(self, points: list[Observation]) -> None:
         for point in points:
@@ -50,14 +52,21 @@ class Pipeline:
     def expire(self, now: float) -> None:
         for out in self.thinner.expire(now):
             self.outbox.add(out)
+        for summary in self.summaries:
+            for message in summary.tick(now):
+                self.outbox.post("spectrum", message)
 
     def flush(self) -> None:
         for out in self.thinner.flush():
             self.outbox.add(out)
 
 
-def handler_for(source: Source, config: Config) -> Handler:
+def handler_for(source: Source, config: Config, pipeline: Pipeline) -> Handler:
     """The parser for one source. Each source has its own state."""
+    if source.reader == "rtl_power":
+        summary = SpectrumSummary(config.station_id)
+        pipeline.summaries.append(summary)
+        return summary.feed
     if source.reader == "beast":
         return Tracker(source.kind, config.station).feed
     if source.reader == "dump978":
@@ -66,7 +75,7 @@ def handler_for(source: Source, config: Config) -> Handler:
 
 
 def reader_task(source: Source, config: Config, pipeline: Pipeline) -> asyncio.Task[None]:
-    handler = handler_for(source, config)
+    handler = handler_for(source, config, pipeline)
     if source.reader == "aircraft_json":
         coro = poll(source.name, source.url, handler, pipeline.accept)
     else:

@@ -7,5 +7,6 @@
   "precision_m": 1000,
   "kinds": ["adsb", "uat"],
   "agent_version": "0.1.0",
-  "counts": { "heard": 912, "sent": 64, "dropped": 848 }
+  "counts": { "heard": 912, "sent": 64, "dropped": 848 },
+  "mesh_node": "!a1b2c3d4"
 }

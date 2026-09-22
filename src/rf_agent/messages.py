@@ -174,6 +174,7 @@ def status(
     agent_version: str,
     position: tuple[float, float] | None,
     precision_m: int,
+    mesh_node: str | None = None,
 ) -> dict[str, Any]:
     """Return the heartbeat. `position` must already be rounded."""
     out: dict[str, Any] = {
@@ -187,4 +188,6 @@ def status(
     out["kinds"] = kinds
     out["agent_version"] = agent_version[:64]
     out["counts"] = {"heard": counts.heard, "sent": counts.sent, "dropped": counts.dropped}
+    if mesh_node is not None:
+        out["mesh_node"] = mesh_node
     return out
