@@ -40,3 +40,9 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64,linux/arm/v7
           push: false
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.sweep
+          platforms: linux/amd64,linux/arm64,linux/arm/v7
+          push: false

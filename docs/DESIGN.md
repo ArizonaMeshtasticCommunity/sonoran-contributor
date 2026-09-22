@@ -268,12 +268,15 @@ arrays rather than a list of things heard.
 
 Levels are tenths of a dB relative to full scale, as integers, so a
 minute of 520 bins is a few kilobytes. `busy` is the share of sweeps, in
-percent, in which the bin stood more than 6 dB above its median.
+percent, in which the bin stood more than 6 dB above its median. `t` is
+the start of the minute. The four arrays have one entry per bin, and a
+bin no sweep reached in that minute is `null`, never a made-up level.
 
 The heartbeat carries the rounded station position, the kinds it
 serves, the agent version, and counts: heard, sent, and dropped by
 thinning, since the last heartbeat. A thinned picture must say it is
-thinned.
+thinned. It also names the Meshtastic node on the same site, if any, as
+`mesh_node` (`!a1b2c3d4`), for 3.5.
 
 ### 4.3 Thinning at the edge
 

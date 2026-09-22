@@ -6,13 +6,17 @@ from rf_agent.agent import Pipeline, handler_for
 from rf_agent.config import load
 from rf_agent.publisher import Publisher
 
-from conftest import EPOCH, SITE, replay_beast, validate
+from conftest import EPOCH, FIXTURES, SITE, replay_beast, validate
 
 CONFIG = load(
     {
         "STATION_ID": "test-site",
         "BROKER_URL": "mqtts://broker.example",
-        "SOURCES": "adsb=beast://readsb,adsb=http://readsb/data/aircraft.json,uat=tcp://dump978",
+        "SOURCES": (
+            "adsb=beast://readsb,adsb=http://readsb/data/aircraft.json,"
+            "uat=tcp://dump978,spectrum=tcp://rf-sweep"
+        ),
+        "SITE_MESH_NODE": "!a1b2c3d4",
         "STATION_LAT": str(SITE[0]),
         "STATION_LON": str(SITE[1]),
     }
@@ -31,7 +35,7 @@ async def test_every_message_passes_the_validator(
     tmp_path, beast_capture, aircraft_snapshots, dump978_capture
 ):
     pipeline = Pipeline(CONFIG)
-    beast, snapshots, uat = (handler_for(s, CONFIG) for s in CONFIG.sources)
+    beast, snapshots, uat, sweep = (handler_for(s, CONFIG, pipeline) for s in CONFIG.sources)
     assert beast.__self__.station == SITE  # the true position, used locally
 
     tracker = beast.__self__
@@ -39,6 +43,7 @@ async def test_every_message_passes_the_validator(
     for n, snapshot in enumerate(aircraft_snapshots):
         pipeline.accept(snapshots(snapshot, EPOCH + n))
     pipeline.accept(uat(dump978_capture, EPOCH))
+    sweep((FIXTURES / "rtl_power.csv").read_bytes(), EPOCH + 30)
     pipeline.expire(EPOCH + 10_000)
 
     client = Recorder()
@@ -57,3 +62,6 @@ async def test_every_message_passes_the_validator(
         path.write_bytes(payload)
         paths.append(str(path))
     assert validate.main(paths) == 0
+    topics = [topic for topic, _ in client.published]
+    assert topics.count("rf/v1/test-site/spectrum") == 1
+    assert json.loads(client.published[-1][1])["mesh_node"] == "!a1b2c3d4"

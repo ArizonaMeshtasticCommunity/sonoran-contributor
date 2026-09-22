@@ -19,6 +19,7 @@ dev = [
 
 [project.scripts]
 rf-agent = "rf_agent.agent:run"
+rf-sweep = "rf_agent.sweep:run"
 
 [build-system]
 requires = ["hatchling"]

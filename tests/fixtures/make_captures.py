@@ -1,4 +1,4 @@
-"""Write the test captures: Beast, aircraft.json snapshots, dump978 lines.
+"""Write the test captures: Beast, aircraft.json, dump978 lines, rtl_power sweeps.
 
     uv run python tests/fixtures/make_captures.py
 
@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import math
+import random
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -206,7 +207,42 @@ def dump978() -> str:
     return "\n".join(lines) + "\n"
 
 
+# The rtl_power capture: two minutes of the 902 to 928 MHz band.
+SWEEP_STEP = 48828.125  # rtl_power's bin, a little under the 50 kHz asked for
+SWEEP_HOP_BINS = 40
+NOISE_DB = -50.0
+STEADY_HZ = 915_000_000  # always on, 12 dB over the floor
+BURST_HZ = 906_875_000  # on in 40% of sweeps, 20 dB over the floor
+SWEEP_HEADER = "# rf-sweep range=902000000:928000000:50000 gain_db=32.8"
+
+
+def rtl_power() -> str:
+    rng = random.Random(915)
+    lines = [SWEEP_HEADER]
+    for n in range(24):  # one sweep every 5 s
+        when = datetime.fromtimestamp(START + 5 * n, UTC)
+        date, clock = when.strftime("%Y-%m-%d"), when.strftime("%H:%M:%S")
+        burst = n % 5 in (1, 3)
+        low = 902_000_000.0
+        while low < 928_000_000:
+            high = low + SWEEP_HOP_BINS * SWEEP_STEP
+            levels = []
+            for i in range(SWEEP_HOP_BINS):
+                f = low + i * SWEEP_STEP
+                db = NOISE_DB + rng.gauss(0, 1.0)
+                if f <= STEADY_HZ < f + SWEEP_STEP:
+                    db = NOISE_DB + 12 + rng.gauss(0, 0.3)
+                if burst and f <= BURST_HZ < f + SWEEP_STEP:
+                    db = NOISE_DB + 20 + rng.gauss(0, 0.3)
+                levels.append(f"{db:.2f}")
+            head = f"{date}, {clock}, {low:.0f}, {high:.0f}, {SWEEP_STEP:.2f}, 3000"
+            lines.append(head + ", " + ", ".join(levels))
+            low = high
+    return "\n".join(lines) + "\n"
+
+
 if __name__ == "__main__":
     (HERE / "beast.bin").write_bytes(beast())
     (HERE / "aircraft.jsonl").write_text(aircraft_json())
     (HERE / "dump978.jsonl").write_text(dump978())
+    (HERE / "rtl_power.csv").write_text(rtl_power())

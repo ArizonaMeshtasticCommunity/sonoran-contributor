@@ -2,8 +2,9 @@
 
 Topics (design 4.1), for this station only:
 
-    rf/v1/<station>/<kind>   batches of at most 100 points, QoS 0
-    rf/v1/<station>/status   the heartbeat, every 60 s, retained, QoS 1
+    rf/v1/<station>/<kind>     batches of at most 100 points, QoS 0
+    rf/v1/<station>/spectrum   a minute of the 900 MHz band, QoS 0
+    rf/v1/<station>/status     the heartbeat, every 60 s, retained, QoS 1
 
 Points wait in the `Outbox` between flushes, and while the broker is
 away. The outbox is bounded: when it is full the oldest points go
@@ -36,6 +37,8 @@ HEARTBEAT_S = 60.0
 FLUSH_S = 2.0
 # About ten minutes of a busy site.
 MAX_QUEUED = 10_000
+# Two hours of spectrum minutes, per kind.
+MAX_POSTED = 120
 BACKOFF_MAX_S = 60.0
 
 
@@ -55,6 +58,9 @@ class Outbox:
     def __init__(self, limit: int = MAX_QUEUED) -> None:
         self.limit = limit
         self._queues: dict[str, deque[Observation]] = {}
+        # Whole messages built elsewhere, such as spectrum minutes, oldest
+        # first. When full, the oldest goes.
+        self.posted: deque[tuple[str, dict[str, Any]]] = deque(maxlen=MAX_POSTED)
         self.overflowed = 0
 
     def __len__(self) -> int:
@@ -84,6 +90,10 @@ class Outbox:
 
     def kinds(self) -> list[str]:
         return [kind for kind, queue in self._queues.items() if queue]
+
+    def post(self, kind: str, message: dict[str, Any]) -> None:
+        """Queue a whole message for `rf/v1/<station>/<kind>`."""
+        self.posted.append((kind, message))
 
 
 def encode(message: dict[str, Any]) -> bytes:
@@ -117,6 +127,10 @@ class Publisher:
         """
         sent = 0
         station = self.config.station_id
+        while self.outbox.posted:
+            kind, message = self.outbox.posted[0]
+            await client.publish(topic(station, kind), encode(message), qos=0, retain=False)
+            self.outbox.posted.popleft()
         for kind in self.outbox.kinds():
             while chunk := self.outbox.take(kind):
                 payload = encode(batch(station, kind, chunk, self.clock()))
@@ -144,6 +158,7 @@ class Publisher:
             agent_version=__version__,
             position=self.position,
             precision_m=self.config.precision_m,
+            mesh_node=self.config.mesh_node,
         )
 
     async def heartbeat(self, client: Client) -> Counts:

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
@@ -18,10 +19,16 @@ from rf_agent.messages import AIRCRAFT_KINDS, STATION_ID
 
 logger = logging.getLogger(__name__)
 
-ALL_KINDS = ("adsb", "uat", "aprs", "sonde", "ism")
+ALL_KINDS = ("adsb", "uat", "aprs", "sonde", "ism", "spectrum")
+# Built so far: aircraft (phase 1) and the 900 MHz band (phase 2).
+BUILT_KINDS = (*AIRCRAFT_KINDS, "spectrum")
 BEAST_PORT = 30005
 DUMP978_JSON_PORT = 30979
+RF_SWEEP_PORT = 30950
 MQTTS_PORT = 8883
+
+
+MESH_NODE = re.compile(r"^![0-9a-f]{8}$")
 
 
 class ConfigError(ValueError):
@@ -33,8 +40,9 @@ class Source:
     """One decoder to read.
 
     `reader` is `beast` (readsb Beast output over TCP), `aircraft_json`
-    (readsb or dump1090-fa `aircraft.json`, over HTTP or from a file), or
-    `dump978` (dump978-fa JSON lines over TCP).
+    (readsb or dump1090-fa `aircraft.json`, over HTTP or from a file),
+    `dump978` (dump978-fa JSON lines over TCP), or `rtl_power` (the
+    sweep lines `rf-sweep` serves over TCP).
     """
 
     kind: str
@@ -62,6 +70,7 @@ class Config:
     adsb_interval_s: float = 20.0
     log_level: str = "INFO"
     ignored_kinds: tuple[str, ...] = field(default=())
+    mesh_node: str | None = None
 
     @property
     def station(self) -> tuple[float, float] | None:
@@ -72,13 +81,26 @@ class Config:
 
     @property
     def kinds(self) -> list[str]:
-        """The kinds this station serves, for the heartbeat."""
-        return sorted({s.kind for s in self.sources})
+        """The observation kinds this station serves, for the heartbeat.
+
+        Spectrum is not one: its minutes say for themselves that the
+        station sweeps.
+        """
+        return sorted({s.kind for s in self.sources if s.kind in AIRCRAFT_KINDS})
 
 
 def _source(kind: str, url: str) -> Source:
     parts = urlsplit(url)
     scheme = parts.scheme.lower()
+    if kind == "spectrum":
+        if scheme != "tcp" or not parts.hostname:
+            raise ConfigError(
+                f"SOURCES: {kind}={url}: spectrum is read from rf-sweep, tcp://host:port"
+            )
+        try:
+            return Source(kind, "rtl_power", url, parts.hostname, parts.port or RF_SWEEP_PORT)
+        except ValueError as exc:
+            raise ConfigError(f"SOURCES: {kind}={url} has a bad port") from exc
     if scheme == "file":
         if not parts.path:
             raise ConfigError(f"SOURCES: {kind}={url} names no file")
@@ -117,7 +139,7 @@ def parse_sources(text: str) -> tuple[tuple[Source, ...], tuple[str, ...]]:
             raise ConfigError(f"SOURCES: {item!r} is not kind=url")
         if kind not in ALL_KINDS:
             raise ConfigError(f"SOURCES: unknown kind {kind!r}; kinds are {', '.join(ALL_KINDS)}")
-        if kind not in AIRCRAFT_KINDS:
+        if kind not in BUILT_KINDS:
             ignored.append(kind)
             continue
         sources.append(_source(kind, url))
@@ -175,7 +197,10 @@ def load(env: Mapping[str, str]) -> Config:
         errors.append(str(exc))
     else:
         if not sources:
-            errors.append("SOURCES names no adsb or uat decoder, such as adsb=beast://readsb:30005")
+            errors.append(
+                "SOURCES names nothing to read, such as adsb=beast://readsb:30005 "
+                "or spectrum=tcp://rf-sweep:30950"
+            )
 
     lat = _float(env, "STATION_LAT", errors)
     lon = _float(env, "STATION_LON", errors)
@@ -201,6 +226,13 @@ def load(env: Mapping[str, str]) -> Config:
     elif interval < 1:
         errors.append("ADSB_INTERVAL_S must be at least 1")
 
+    mesh_node = None
+    node_text = env.get("SITE_MESH_NODE", "").strip().lower()
+    if node_text:
+        mesh_node = node_text if node_text.startswith("!") else "!" + node_text
+        if not MESH_NODE.match(mesh_node):
+            errors.append("SITE_MESH_NODE must be a node ID such as !a1b2c3d4")
+
     log_level = env.get("LOG_LEVEL", "").strip().upper() or "INFO"
     if log_level not in ("DEBUG", "INFO", "WARNING", "ERROR"):
         errors.append("LOG_LEVEL must be DEBUG, INFO, WARNING or ERROR")
@@ -220,4 +252,5 @@ def load(env: Mapping[str, str]) -> Config:
         adsb_interval_s=interval,
         log_level=log_level,
         ignored_kinds=ignored,
+        mesh_node=mesh_node,
     )

@@ -125,3 +125,26 @@ def test_the_program_stops_on_bad_settings():
     )
     assert result.returncode == 2
     assert "STATION_ID" in result.stderr
+
+
+def test_a_spectrum_source_and_the_mesh_node():
+    config = load(env(SOURCES="spectrum=tcp://rf-sweep", SITE_MESH_NODE="A1B2C3D4"))
+    (source,) = config.sources
+    assert (source.kind, source.reader, source.port) == ("spectrum", "rtl_power", 30950)
+    assert config.kinds == []  # spectrum is not an observation kind
+    assert config.mesh_node == "!a1b2c3d4"
+    both = load(env(SOURCES="adsb=beast://readsb,spectrum=tcp://rf-sweep:4000"))
+    assert both.kinds == ["adsb"] and both.sources[1].port == 4000
+
+
+@pytest.mark.parametrize(
+    "changes,needle",
+    [
+        ({"SOURCES": "spectrum=http://rf-sweep"}, "rf-sweep"),
+        ({"SOURCES": "spectrum=tcp://rf-sweep:x"}, "port"),
+        ({"SITE_MESH_NODE": "!a1b2"}, "SITE_MESH_NODE"),
+    ],
+)
+def test_bad_spectrum_settings_are_named(changes, needle):
+    with pytest.raises(ConfigError, match=needle):
+        load(env(**changes))

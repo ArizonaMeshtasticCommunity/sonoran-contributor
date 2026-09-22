@@ -15,15 +15,14 @@ from rf_agent.publisher import Outbox, Publisher, run
 from conftest import assert_valid
 
 T = 1_790_100_000.0
-CONFIG = load(
-    {
-        "STATION_ID": "test-site",
-        "BROKER_URL": "mqtts://broker.example",
-        "SOURCES": "adsb=beast://readsb,uat=tcp://dump978",
-        "STATION_LAT": "32.80013",
-        "STATION_LON": "-113.2999",
-    }
-)
+CONFIG_ENV = {
+    "STATION_ID": "test-site",
+    "BROKER_URL": "mqtts://broker.example",
+    "SOURCES": "adsb=beast://readsb,uat=tcp://dump978",
+    "STATION_LAT": "32.80013",
+    "STATION_LON": "-113.2999",
+}
+CONFIG = load(CONFIG_ENV)
 
 
 class FakeClient:
@@ -137,3 +136,31 @@ async def test_run_reconnects_and_sends_after_the_broker_returns(monkeypatch):
     assert "rf/v1/test-site/status" in topics
     for _, message, _, _ in client.published:
         assert_valid(message)
+
+
+async def test_spectrum_minutes_go_out_on_their_topic_and_survive_a_failure():
+    spectrum = {
+        "v": 1, "station": "test-site", "kind": "spectrum", "t": "2026-09-22T18:00:00Z",
+        "f_start_hz": 902_000_000, "bin_hz": 50_000, "sweeps": 12, "gain_db": 32.8,
+        "p50": [-500, None], "p95": [-480, None], "peak": [-470, None], "busy": [0, None],
+    }  # fmt: skip
+    publisher = make()
+    publisher.outbox.post("spectrum", spectrum)
+    with pytest.raises(aiomqtt.MqttError):
+        await publisher.flush(FakeClient(fail_after=0))
+    client = FakeClient()
+    await publisher.flush(client)
+    ((topic, message, qos, retain),) = client.published
+    assert (topic, qos, retain) == ("rf/v1/test-site/spectrum", 0, False)
+    assert_valid(message)
+    assert not publisher.outbox.posted
+
+
+async def test_heartbeat_names_the_mesh_node():
+    config = load({**CONFIG_ENV, "SITE_MESH_NODE": "!a1b2c3d4"})
+    publisher = Publisher(config, Outbox(), Counts(), clock=lambda: T)
+    client = FakeClient()
+    await publisher.heartbeat(client)
+    message = client.published[0][1]
+    assert_valid(message)
+    assert message["mesh_node"] == "!a1b2c3d4"
