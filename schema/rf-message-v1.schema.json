@@ -194,6 +194,143 @@
       "title": "Observation",
       "type": "object"
     },
+    "Spectrum": {
+      "description": "One minute of the 900 MHz band from one station, on `rf/v1/<station>/spectrum`.\n\nBin `i` covers `f_start_hz + i * bin_hz` to the next bin. Per bin: the\nmedian, the 95th percentile and the peak level over the minute's\nsweeps, and `busy`, the share of sweeps in percent in which the bin\nstood more than 6 dB above its own median. The four arrays have one\nentry per bin. Levels compare one station with itself over time,\nnever two stations (design 3.5).",
+      "properties": {
+        "bin_hz": {
+          "maximum": 10000000,
+          "minimum": 1,
+          "title": "Bin Hz",
+          "type": "integer"
+        },
+        "busy": {
+          "items": {
+            "anyOf": [
+              {
+                "maximum": 100,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "maxItems": 4096,
+          "minItems": 1,
+          "title": "Busy",
+          "type": "array"
+        },
+        "f_start_hz": {
+          "maximum": 6000000000,
+          "minimum": 0,
+          "title": "F Start Hz",
+          "type": "integer"
+        },
+        "gain_db": {
+          "maximum": 100,
+          "minimum": -10,
+          "title": "Gain Db",
+          "type": "number"
+        },
+        "kind": {
+          "const": "spectrum",
+          "title": "Kind",
+          "type": "string"
+        },
+        "p50": {
+          "items": {
+            "anyOf": [
+              {
+                "maximum": 1000,
+                "minimum": -2000,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "maxItems": 4096,
+          "minItems": 1,
+          "title": "P50",
+          "type": "array"
+        },
+        "p95": {
+          "items": {
+            "anyOf": [
+              {
+                "maximum": 1000,
+                "minimum": -2000,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "maxItems": 4096,
+          "minItems": 1,
+          "title": "P95",
+          "type": "array"
+        },
+        "peak": {
+          "items": {
+            "anyOf": [
+              {
+                "maximum": 1000,
+                "minimum": -2000,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "maxItems": 4096,
+          "minItems": 1,
+          "title": "Peak",
+          "type": "array"
+        },
+        "station": {
+          "pattern": "^[a-z0-9-]{3,32}$",
+          "title": "Station",
+          "type": "string"
+        },
+        "sweeps": {
+          "maximum": 100000,
+          "minimum": 1,
+          "title": "Sweeps",
+          "type": "integer"
+        },
+        "t": {
+          "format": "date-time",
+          "title": "T",
+          "type": "string"
+        },
+        "v": {
+          "const": 1,
+          "title": "V",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "v",
+        "station",
+        "kind",
+        "t",
+        "f_start_hz",
+        "bin_hz",
+        "sweeps",
+        "gain_db",
+        "p50",
+        "p95",
+        "peak",
+        "busy"
+      ],
+      "title": "Spectrum",
+      "type": "object"
+    },
     "Status": {
       "description": "The heartbeat, published retained on `rf/v1/<station>/status`.",
       "properties": {
@@ -261,6 +398,19 @@
           "default": null,
           "title": "Lon"
         },
+        "mesh_node": {
+          "anyOf": [
+            {
+              "pattern": "^![0-9a-f]{8}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mesh Node"
+        },
         "precision_m": {
           "anyOf": [
             {
@@ -301,9 +451,24 @@
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "Published by rf-agent. Observations go to rf/v1/<station>/<kind>, the heartbeat to rf/v1/<station>/status, retained. See docs/design/rf-map.md section 4. Generated from sonoran/rf/schema.py.",
+  "description": "Published by rf-agent. Observations go to rf/v1/<station>/<kind>, the heartbeat to rf/v1/<station>/status, retained, and a minute of the 900 MHz band to rf/v1/<station>/spectrum. See docs/design/rf-map.md section 4. Generated from sonoran/rf/schema.py.",
   "else": {
-    "$ref": "#/$defs/Status"
+    "else": {
+      "$ref": "#/$defs/Status"
+    },
+    "if": {
+      "properties": {
+        "kind": {
+          "const": "spectrum"
+        }
+      },
+      "required": [
+        "kind"
+      ]
+    },
+    "then": {
+      "$ref": "#/$defs/Spectrum"
+    }
   },
   "if": {
     "required": [
