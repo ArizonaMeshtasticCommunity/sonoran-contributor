@@ -78,6 +78,14 @@ The language is Python 3.13 with `aiomqtt`. It matches Sonoran and lets
 the tests reuse `tools/validate.py` directly. The package is
 `src/rf_agent`: one module per reader, `thinning.py`, `publisher.py`.
 
+### Phase 2, the 900 MHz band
+
+`rf-sweep` (`src/rf_agent/sweep.py`, `Dockerfile.sweep`) runs `rtl_power`
+on a dongle chosen by serial, at a fixed gain, and serves its lines on
+TCP. The agent reads them with `spectrum=tcp://...` and sends one
+summary a minute (`src/rf_agent/spectrum.py`). The agent still never
+opens a device.
+
 ## 5. Testing
 
 - Readers are tested with decoder output: a Beast capture, an
@@ -86,6 +94,8 @@ the tests reuse `tools/validate.py` directly. The package is
   committed, so no real station is in the repository. Until a recording
   is committed, `tests/fixtures/make_captures.py` writes the captures,
   for invented aircraft, in each decoder's exact format.
+- Spectrum summaries are tested with an `rtl_power` capture: a steady
+  carrier must land in its bin, and a bursty one must raise its `busy`.
 - Thinning has unit tests that count points in and out.
 - Every message a test builds is checked against the schema.
 - Do not run heavy tests on a machine that also serves production.

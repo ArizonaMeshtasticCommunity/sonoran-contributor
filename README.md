@@ -6,7 +6,7 @@
 Local receivers · MQTT to one broker · stored and mapped by Sonoran.
 
 [![Contract](https://img.shields.io/badge/contract-v1-EA6A3A?style=flat-square)](schema/rf-message-v1.schema.json)
-[![Phase](https://img.shields.io/badge/phase-1%20aircraft-2A6DB2?style=flat-square)](#-roadmap)
+[![Phase](https://img.shields.io/badge/phase-2%20900%20MHz%20band-2A6DB2?style=flat-square)](#-roadmap)
 [![CI](https://github.com/ArizonaMeshtasticCommunity/rf-map/actions/workflows/ci.yml/badge.svg)](https://github.com/ArizonaMeshtasticCommunity/rf-map/actions/workflows/ci.yml)
 [![Sources](https://img.shields.io/badge/sources-local%20only-3776AB?style=flat-square)](#-what-it-reads)
 [![Sonoran](https://img.shields.io/badge/stored%20by-Sonoran-EA6A3A?style=flat-square)](https://github.com/ArizonaMeshtasticCommunity/beta-sonoran)
@@ -28,6 +28,7 @@ traffic control and not for navigation.
 
 ## ✨ Features
 
+- 📶 **The 900 MHz band** — a spare dongle sweeps 902–928 MHz, the band the mesh lives in, to find what interferes with it.
 - ✈️ **Aircraft** — ADS-B at 1090 MHz and UAT at 978 MHz, from `readsb`, `dump1090-fa` or `dump978-fa`.
 - 🤝 **Never takes your dongle** — reads the decoder's network port, so FlightAware, FR24 and every other feed keep running.
 - 🪶 **Thinned at the edge** — one point per aircraft every 20 s leaves the site, not one a second.
@@ -58,7 +59,7 @@ several readers at once.
 |--------|-------------------------|---------------------|:----:|:-----:|
 | ADS-B | `readsb`, `dump1090-fa` | Beast on TCP 30005, or `aircraft.json` | 1090 MHz | **1** |
 | UAT | `dump978-fa` | JSON on TCP 30979 | 978 MHz | **1** |
-| Spectrum | `rtl_power` in `rf-sweep`, its own dongle | CSV sweep lines | 902–928 MHz | 2 |
+| Spectrum | `rtl_power` in `rf-sweep`, its own dongle | sweep lines on TCP 30950 | 902–928 MHz | **2** |
 | APRS | `direwolf`, off the air | KISS on TCP 8001 | 144.39 MHz | 3 |
 | Radiosondes | `radiosonde_auto_rx`, upload off | UDP 55672 | 400–406 MHz | 4 |
 | Weather sensors | `rtl_433`, allow-listed | JSON over UDP | 433 / 915 MHz | 4 |
@@ -104,14 +105,15 @@ Every setting is an environment variable.
 |----------|---------|:-------:|
 | `STATION_ID` | Short name, `[a-z0-9-]{3,32}`. Also the broker login. | — |
 | `BROKER_URL`, `BROKER_USER`, `BROKER_PASS` | The community broker, and this station's own login. | — |
-| `SOURCES` | `kind=url` pairs, comma separated. Kinds: `adsb`, `uat`, `aprs`, `sonde`, `ism`. See [sources](#sources). | — |
+| `SOURCES` | `kind=url` pairs, comma separated. Kinds: `adsb`, `uat`, `spectrum`, `aprs`, `sonde`, `ism`. See [sources](#sources). | — |
 | `STATION_LAT`, `STATION_LON` | Where the antenna is. | — |
 | `STATION_PRECISION_M` | How much to round the station position before it is sent. | `1000` |
 | `ADSB_INTERVAL_S` | Seconds between two points for one aircraft. At least 1. | `20` |
 | `LOG_LEVEL` | `DEBUG`, `INFO`, `WARNING` or `ERROR`. | `INFO` |
 | `ISM_ALLOW` | `rtl_433` model names to pass. Empty means none pass. Phase 4. | empty |
-| `SPECTRUM_RANGE` | `start:end:bin` in Hz, for `rf-sweep`. Phase 2. | `902000000:928000000:50000` |
-| `SITE_MESH_NODE` | The Meshtastic node at this site, if any, so its own bursts are not read as interference. Phase 2. | — |
+| `SITE_MESH_NODE` | The Meshtastic node at this site, such as `!a1b2c3d4`, if any, so its own bursts are not read as interference. | — |
+
+`rf-sweep` has settings of its own; see [the 900 MHz band](#-the-900-mhz-band).
 
 `BROKER_URL` must be `mqtts://`: the agent talks to a broker over TLS
 only, checked against the system's certificate authorities. The port
@@ -134,6 +136,7 @@ The scheme of each URL picks the reader.
 | `http://host/data/aircraft.json` | readsb or dump1090-fa `aircraft.json`, once a second | 80 |
 | `file:///run/readsb/aircraft.json` | the same, from a mounted file | — |
 | `tcp://host:port` | dump978-fa JSON lines | 30979 |
+| `spectrum=tcp://host:port` | `rf-sweep` sweep lines | 30950 |
 
 Only positions this receiver heard leave the site. From `aircraft.json`,
 MLAT positions (computed by an aggregator's server and fed back) and
@@ -142,11 +145,77 @@ ADS-R rebroadcasts are left out; UAT aircraft come from `uat=`.
 Kinds of a later phase are accepted in `SOURCES` and ignored, with a
 warning, until their phase is built.
 
+## 📶 The 900 MHz band
+
+For a member with a **spare** dongle and a 915 MHz antenna. `rf-sweep`
+owns that dongle and does nothing else: it sweeps 902 to 928 MHz with
+`rtl_power`, at a fixed gain, and serves the sweeps to the agent. The
+agent condenses each minute into one message per station: for each
+50 kHz bin, the median, the 95th percentile and the peak level, and how
+often the bin stood more than 6 dB above its own median. That last
+number is the one that says "something keeps sitting on LongFast".
+
+```yaml
+services:
+  rf-sweep:
+    image: ghcr.io/arizonameshtasticcommunity/rf-sweep:main
+    restart: unless-stopped
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+    environment:
+      SWEEP_SERIAL: SWEEP915
+      SWEEP_GAIN_DB: "32.8"
+  rf-agent:
+    image: ghcr.io/arizonameshtasticcommunity/rf-agent:main
+    restart: unless-stopped
+    environment:
+      STATION_ID: tempe-roof
+      BROKER_URL: mqtts://broker.example:8883
+      BROKER_PASS: ${RF_AGENT_PASS}
+      SOURCES: spectrum=tcp://rf-sweep:30950
+      SITE_MESH_NODE: "!a1b2c3d4"
+```
+
+`rf-sweep` is optional. The agent runs without it, for aircraft only, and
+a site with only a spare dongle can list `spectrum=` alone. Each source
+stands on its own: if `rf-sweep` is down, the agent keeps retrying it
+while aircraft keep flowing, and spectrum starts again when it is back.
+
+| `rf-sweep` variable | Meaning | Default |
+|---------------------|---------|:-------:|
+| `SWEEP_SERIAL` | The serial of the dongle to sweep with. It opens that one and no other. | — |
+| `SWEEP_GAIN_DB` | The gain, fixed, in dB. Automatic gain is refused. | — |
+| `SPECTRUM_RANGE` | `start:end:bin` in Hz. | `902000000:928000000:50000` |
+| `SWEEP_INTERVAL_S` | Seconds per sweep. | `5` |
+| `SWEEP_PPM` | The dongle's frequency correction. | `0` |
+| `SWEEP_PORT` | The port the agent reads, inside the compose network. | `30950` |
+
+Before the first run:
+
+- **Give the dongle a serial of its own**, with letters in it, so
+  `rf-sweep` can never take a dongle that feeds something else. With
+  only that dongle plugged in: `rtl_eeprom -s SWEEP915`, then unplug it
+  and plug it in again. An all-digit serial is refused, because
+  `rtl_power` would read it as a device number.
+- **Pick the gain once and keep it.** A level only compares with the
+  same station at the same gain. Change the gain and the minutes before
+  and after no longer compare.
+- **Keep it away from the site's own node.** A sweeper beside a
+  Meshtastic node mostly records that node. `SITE_MESH_NODE` lets
+  Sonoran mark the minutes the node was talking.
+- **Do not publish port 30950** on the host. Only the agent needs it.
+
+Levels are in dB relative to the dongle's full scale, not dBm. They
+compare one station with itself over time, never two stations. The
+band view shows what occupies the band; it does not say what the thing
+is.
+
 ## 📨 The message contract
 
 | Topic | Message | QoS |
 |-------|---------|:---:|
 | `rf/v1/<station>/<kind>` | a **batch** of up to 100 observations of one kind | 0 |
+| `rf/v1/<station>/spectrum` | one **minute** of the 900 MHz band | 0 |
 | `rf/v1/<station>/status` | the **heartbeat**, every 60 s, retained | 1 |
 
 A message names the station its topic names, or Sonoran drops it. Unknown
@@ -202,7 +271,7 @@ changes, never edit it by hand.
 ## 🗺️ Roadmap
 
 1. **Aircraft** — ADS-B and UAT readers, thinning, heartbeat. Built, here and in Sonoran.
-2. **The 900 MHz band** — `rf-sweep` and the spectrum summary.
+2. **The 900 MHz band** — `rf-sweep` and the spectrum summary. Built here; Sonoran validates it and will store it and draw the waterfall next.
 3. **APRS** — the APRS reader, off the air.
 4. **Radiosondes and weather sensors** — two more readers and the allow-lists.
 
