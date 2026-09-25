@@ -13,7 +13,28 @@
       "alt_ref": "geom",
       "gs_kn": 55,
       "track_deg": 200,
-      "meta": { "symbol": "/>", "destination": "S32U6T", "comment": "on the road" }
+      "meta": {
+        "symbol": "/>",
+        "destination": "S32U6T",
+        "comment": "on the road",
+        "path": "W7MOT-3*,WIDE2-1"
+      },
+      "direct": false,
+      "via": "w7mot-3"
+    },
+    {
+      "id": ";field_day",
+      "t": "2026-09-22T17:59:40.0Z",
+      "lat": 33.48,
+      "lon": -112.11,
+      "direct": true,
+      "precision_m": 1852,
+      "meta": {
+        "symbol": "/-",
+        "owner": "kd7abc",
+        "object": "object",
+        "comment": "club field day, all welcome"
+      }
     }
   ]
 }
