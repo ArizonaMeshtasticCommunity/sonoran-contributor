@@ -1,0 +1,26 @@
+{"time":"2026-09-22 18:00:00","model":"Acurite-Tower","id":1234,"channel":"A","battery_ok":1,"temperature_C":21.5,"humidity":44,"mic":"CHECKSUM","rssi":-11.2}
+{"time":"2026-09-22 18:00:00","model":"Schrader-TPMS","id":998877,"pressure_kPa":240}
+<165>1 2026-09-22T18:01:00Z rtl433 - - - {"time":"2026-09-22 18:01:00","model":"Acurite-Tower","id":1234,"channel":"A","battery_ok":1,"temperature_C":21.6,"humidity":44,"mic":"CHECKSUM","rssi":-11.2}
+<165>1 2026-09-22T18:02:00Z rtl433 - - - {"time":"2026-09-22 18:02:00","model":"Acurite-Tower","id":1234,"channel":"A","battery_ok":1,"temperature_C":21.7,"humidity":44,"mic":"CHECKSUM","rssi":-11.2}
+<165>1 2026-09-22T18:03:00Z rtl433 - - - {"time":"2026-09-22 18:03:00","model":"Acurite-Tower","id":1234,"channel":"A","battery_ok":1,"temperature_C":21.8,"humidity":44,"mic":"CHECKSUM","rssi":-11.2}
+{"time":"2026-09-22 18:04:00","model":"Acurite-Tower","id":1234,"channel":"A","battery_ok":1,"temperature_C":21.9,"humidity":44,"mic":"CHECKSUM","rssi":-11.2}
+<165>1 2026-09-22T18:05:00Z rtl433 - - - {"time":"2026-09-22 18:05:00","model":"Acurite-Tower","id":1234,"channel":"A","battery_ok":1,"temperature_C":22.0,"humidity":44,"mic":"CHECKSUM","rssi":-11.2}
+{"time":"2026-09-22 18:00:00","model":"Schrader-TPMS","id":998877,"pressure_kPa":240}
+<165>1 2026-09-22T18:06:00Z rtl433 - - - {"time":"2026-09-22 18:06:00","model":"Acurite-Tower","id":1234,"channel":"A","battery_ok":1,"temperature_C":22.1,"humidity":44,"mic":"CHECKSUM","rssi":-11.2}
+<165>1 2026-09-22T18:07:00Z rtl433 - - - {"time":"2026-09-22 18:07:00","model":"Acurite-Tower","id":1234,"channel":"A","battery_ok":1,"temperature_C":22.2,"humidity":44,"mic":"CHECKSUM","rssi":-11.2}
+{"time":"2026-09-22 18:08:00","model":"Acurite-Tower","id":1234,"channel":"A","battery_ok":1,"temperature_C":22.3,"humidity":44,"mic":"CHECKSUM","rssi":-11.2}
+<165>1 2026-09-22T18:09:00Z rtl433 - - - {"time":"2026-09-22 18:09:00","model":"Acurite-Tower","id":1234,"channel":"A","battery_ok":1,"temperature_C":22.4,"humidity":44,"mic":"CHECKSUM","rssi":-11.2}
+<165>1 2026-09-22T18:10:00Z rtl433 - - - {"time":"2026-09-22 18:10:00","model":"Acurite-Tower","id":1234,"channel":"A","battery_ok":1,"temperature_C":22.5,"humidity":44,"mic":"CHECKSUM","rssi":-11.2}
+{"time":"2026-09-22 18:00:00","model":"Schrader-TPMS","id":998877,"pressure_kPa":240}
+<165>1 2026-09-22T18:11:00Z rtl433 - - - {"time":"2026-09-22 18:11:00","model":"Acurite-Tower","id":1234,"channel":"A","battery_ok":1,"temperature_C":22.6,"humidity":44,"mic":"CHECKSUM","rssi":-11.2}
+{"time":"2026-09-22 18:12:00","model":"Acurite-Tower","id":1234,"channel":"A","battery_ok":1,"temperature_C":22.7,"humidity":44,"mic":"CHECKSUM","rssi":-11.2}
+<165>1 2026-09-22T18:13:00Z rtl433 - - - {"time":"2026-09-22 18:13:00","model":"Acurite-Tower","id":1234,"channel":"A","battery_ok":1,"temperature_C":22.8,"humidity":44,"mic":"CHECKSUM","rssi":-11.2}
+<165>1 2026-09-22T18:14:00Z rtl433 - - - {"time":"2026-09-22 18:14:00","model":"Acurite-Tower","id":1234,"channel":"A","battery_ok":1,"temperature_C":22.9,"humidity":44,"mic":"CHECKSUM","rssi":-11.2}
+<165>1 2026-09-22T18:15:00Z rtl433 - - - {"time":"2026-09-22 18:15:00","model":"Acurite-Tower","id":1234,"channel":"A","battery_ok":1,"temperature_C":23.0,"humidity":44,"mic":"CHECKSUM","rssi":-11.2}
+{"time":"2026-09-22 18:00:00","model":"Schrader-TPMS","id":998877,"pressure_kPa":240}
+{"time":"2026-09-22 18:16:00","model":"Acurite-Tower","id":1234,"channel":"A","battery_ok":1,"temperature_C":23.1,"humidity":44,"mic":"CHECKSUM","rssi":-11.2}
+<165>1 2026-09-22T18:17:00Z rtl433 - - - {"time":"2026-09-22 18:17:00","model":"Acurite-Tower","id":1234,"channel":"A","battery_ok":1,"temperature_C":23.2,"humidity":44,"mic":"CHECKSUM","rssi":-11.2}
+<165>1 2026-09-22T18:18:00Z rtl433 - - - {"time":"2026-09-22 18:18:00","model":"Acurite-Tower","id":1234,"channel":"A","battery_ok":1,"temperature_C":23.3,"humidity":44,"mic":"CHECKSUM","rssi":-11.2}
+<165>1 2026-09-22T18:19:00Z rtl433 - - - {"time":"2026-09-22 18:19:00","model":"Acurite-Tower","id":1234,"channel":"A","battery_ok":1,"temperature_C":23.4,"humidity":44,"mic":"CHECKSUM","rssi":-11.2}
+{"model":"Acurite-Tower","channel":"B","temperature_C":19.0}
+not json at all

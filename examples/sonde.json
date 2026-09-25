@@ -1,0 +1,19 @@
+{
+  "v": 1,
+  "station": "tempe-roof",
+  "kind": "sonde",
+  "sent": "2026-09-22T18:00:00Z",
+  "obs": [
+    {
+      "id": "s4132077",
+      "t": "2026-09-22T17:59:55.0Z",
+      "lat": 33.91,
+      "lon": -112.31,
+      "alt_m": 18450,
+      "alt_ref": "geom",
+      "gs_kn": 25,
+      "track_deg": 70,
+      "meta": { "model": "RS41", "freq": "404.100 MHz", "sats": 9, "snr": 14.2 }
+    }
+  ]
+}

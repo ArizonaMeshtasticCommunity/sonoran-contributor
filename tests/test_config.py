@@ -73,10 +73,13 @@ def test_every_source_form():
     ]
 
 
-def test_kinds_of_a_later_phase_are_set_aside():
+def test_every_kind_is_built_now():
+    # Nothing is set aside: phases 1 to 4 all have readers. The mechanism
+    # stays for a kind added to the contract before its reader lands.
     config = load(env(SOURCES="adsb=beast://readsb,aprs=tcp://direwolf:8001"))
-    assert config.ignored_kinds == ("aprs",)
-    assert config.kinds == ["adsb"]
+    assert config.ignored_kinds == ()
+    assert config.kinds == ["adsb", "aprs"]
+    assert [s.reader for s in config.sources] == ["beast", "kiss"]
 
 
 @pytest.mark.parametrize(
@@ -88,7 +91,6 @@ def test_kinds_of_a_later_phase_are_set_aside():
         ({"BROKER_URL": None}, "BROKER_URL"),
         ({"BROKER_URL": "mqtts://:8883"}, "no host"),
         ({"SOURCES": ""}, "SOURCES"),
-        ({"SOURCES": "aprs=tcp://direwolf:8001"}, "SOURCES"),
         ({"SOURCES": "adsb"}, "kind=url"),
         ({"SOURCES": "boats=tcp://x:1"}, "unknown kind"),
         ({"SOURCES": "adsb=ftp://x"}, "scheme"),
@@ -146,5 +148,49 @@ def test_a_spectrum_source_and_the_mesh_node():
     ],
 )
 def test_bad_spectrum_settings_are_named(changes, needle):
+    with pytest.raises(ConfigError, match=needle):
+        load(env(**changes))
+
+
+def test_the_phase_3_and_4_sources():
+    config = load(
+        env(
+            SOURCES="aprs=kiss://direwolf,sonde=udp://0.0.0.0,ism=udp://0.0.0.0:10433",
+            ISM_ALLOW="Acurite-Tower, Fineoffset-WH51",
+            STATION_LAT="32.8",
+            STATION_LON="-113.3",
+        )
+    )
+    got = [(s.kind, s.reader, s.host, s.port) for s in config.sources]
+    assert got == [
+        ("aprs", "kiss", "direwolf", 8001),
+        ("sonde", "auto_rx", "0.0.0.0", 55672),
+        ("ism", "rtl_433", "0.0.0.0", 10433),
+    ]
+    assert config.kinds == ["aprs", "ism", "sonde"]
+    assert config.ism_allow == {"acurite-tower", "fineoffset-wh51"}
+    assert config.ignored_kinds == ()
+
+
+@pytest.mark.parametrize(
+    "changes,needle",
+    [
+        # A sensor has no position of its own, so the station needs one.
+        ({"SOURCES": "ism=udp://0.0.0.0:10433", "ISM_ALLOW": "Acurite-Tower"}, "STATION_LAT"),
+        # Empty by default, and empty means nothing would ever be sent.
+        (
+            {
+                "SOURCES": "ism=udp://0.0.0.0:10433",
+                "STATION_LAT": "32.8",
+                "STATION_LON": "-113.3",
+            },
+            "ISM_ALLOW",
+        ),
+        ({"SOURCES": "sonde=tcp://auto-rx:55672"}, "broadcasts"),
+        ({"SOURCES": "ism=udp://0.0.0.0", "ISM_ALLOW": "x"}, "no port"),
+        ({"SOURCES": "aprs=udp://direwolf:8001"}, "direwolf"),
+    ],
+)
+def test_bad_phase_3_and_4_settings_are_named(changes, needle):
     with pytest.raises(ConfigError, match=needle):
         load(env(**changes))

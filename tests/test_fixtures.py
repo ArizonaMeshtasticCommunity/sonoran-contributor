@@ -15,6 +15,9 @@ def test_captures_match_their_generator():
     assert (FIXTURES / "aircraft.jsonl").read_text() == make_captures.aircraft_json()
     assert (FIXTURES / "dump978.jsonl").read_text() == make_captures.dump978()
     assert (FIXTURES / "rtl_power.csv").read_text() == make_captures.rtl_power()
+    assert (FIXTURES / "aprs.kiss").read_bytes() == make_captures.aprs()
+    assert (FIXTURES / "sonde.jsonl").read_text() == make_captures.sonde()
+    assert (FIXTURES / "rtl433.jsonl").read_text() == make_captures.rtl433()
 
 
 def test_json_captures_stay_near_the_site():

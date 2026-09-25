@@ -1,6 +1,10 @@
-"""Thin at the edge: one point per aircraft per interval (design 4.3).
+"""Thin at the edge, per kind (design 4.3).
 
-A decoder reports an aircraft about once a second. The agent sends:
+An ADS-B decoder reports an aircraft about once a second, and a sonde
+sends about once a second for a two hour flight. APRS and weather
+sensors are slow already, so every packet goes as received.
+
+For a kind with an interval, the agent sends:
 
 - the first point of each visit, at once;
 - then a point whenever `interval` seconds have passed since the last
@@ -21,6 +25,10 @@ from rf_agent.messages import Counts, Observation
 
 # Silence that ends a visit. readsb drops a position after 60 s.
 VISIT_GAP_S = 60.0
+# Seconds between two points of one thing, per kind. Zero sends every
+# point: APRS and sensors are slow already. Aircraft use the configured
+# ADSB_INTERVAL_S instead of the entry here.
+INTERVALS = {"adsb": 20.0, "uat": 20.0, "sonde": 5.0, "aprs": 0.0, "ism": 0.0}
 
 
 @dataclass(slots=True)
@@ -32,10 +40,16 @@ class _Visit:
 
 class Thinner:
     def __init__(self, interval_s: float, counts: Counts, gap_s: float = VISIT_GAP_S) -> None:
-        self.interval = interval_s
+        # `interval_s` is ADSB_INTERVAL_S, for aircraft. Every other kind
+        # follows INTERVALS.
+        self.intervals = dict(INTERVALS)
+        self.intervals["adsb"] = self.intervals["uat"] = interval_s
         self.gap = gap_s
         self.counts = counts
         self._visits: dict[tuple[str, str], _Visit] = {}
+
+    def interval_for(self, kind: str) -> float:
+        return self.intervals.get(kind, 0.0)
 
     def __len__(self) -> int:
         return len(self._visits)
@@ -63,7 +77,9 @@ class Thinner:
             self.counts.dropped += 1
             return out
         visit.last_heard = obs.t
-        if obs.t - visit.last_sent >= self.interval:
+        # An interval of zero sends every point: the difference is never
+        # below zero, so nothing is ever held back.
+        if obs.t - visit.last_sent >= self.interval_for(obs.kind):
             if visit.pending is not None:
                 self.counts.dropped += 1
                 visit.pending = None
