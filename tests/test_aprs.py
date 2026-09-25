@@ -107,9 +107,13 @@ def test_the_capture_gives_one_point_per_position_packet():
     reader = Direwolf()
     points = reader.feed(capture(), EPOCH)
     per = Counter(p.id for p in points)
-    assert per == {"kd7abc": 3, "w1xyz-5": 6, "kd7abc-9": 12}
-    # Messages, status, telemetry and the object carry no position.
-    assert reader.no_position == 4
+    # The fixed station beacons the same packet three times in a row, and
+    # two of those are dropped as repeats. The object it placed is a
+    # thing of its own, named with a leading `;`.
+    assert per == {"kd7abc": 1, "w1xyz-5": 6, "kd7abc-9": 12, ";field_day": 1}
+    assert reader.repeats == 2
+    # Messages, status and telemetry carry no position.
+    assert reader.no_position == 3
     assert reader.bad == 0
     fixed = next(p for p in points if p.id == "kd7abc")
     assert fixed.alt_m == pytest.approx(787 * 0.3048, abs=1)
@@ -127,3 +131,169 @@ def test_bad_input_is_counted_not_raised():
         reader.feed(rng.randbytes(rng.randint(1, 200)), EPOCH)
     reader.feed(kiss_frame(b"\x00" * 20), EPOCH)
     assert reader.bad >= 1
+
+
+# The packets below are the shapes seen in the first live data from a
+# station, with positions changed.
+
+
+def test_a_weather_station_does_not_move():
+    # With the `_` symbol, `120/000` is wind, not a course and speed.
+    got = parse_position(b"@251207z3206.21N/11056.22W_120/000g002t064P000r000b10140e1w")
+    assert got["course"] is None and got["speed_kn"] is None
+    assert got["weather"] == {
+        "wind_dir_deg": 120,
+        "wind_kn": 0.0,
+        "gust_kn": 1.74,
+        "temperature_f": 64,
+        "rain_today_in": 0.0,
+        "rain_1h_in": 0.0,
+        "pressure_hpa": 1014.0,
+    }
+    # The readings come in any order: this one writes P before r.
+    assert got["comment"] == "e1w"
+
+
+def test_a_comment_is_kept_whole():
+    text = b"North Phoenix WX3in1 #YAESUGANG RF & iGate K7XYG-10 U=13.3V and more besides"
+    got = parse_position(b"=3339.48N/11202.04W#" + text)
+    assert got["comment"] == text.decode()
+    assert parse_position(b"!3519.60N/11141.50W_SnowBowl")["comment"] == "SnowBowl"
+
+
+def test_a_station_extension_is_not_a_course():
+    got = parse_position(b"!3248.00N/11318.00W#PHG5132 wide coverage")
+    assert got["course"] is None and got["speed_kn"] is None
+    assert got["comment"] == "wide coverage"
+
+
+def test_mic_e_carries_its_message_and_a_readable_comment():
+    info = bytes([0x60]) + b"(`:lpi>/" + b'"87}_1 rolling'
+    got = parse_mic_e("S3SWUQ", info)
+    assert got["lat"] == pytest.approx(33.6252, abs=1e-4)
+    assert got["alt_m"] == 396
+    assert got["message"] == "In Service"
+    # The altitude and the radio's own name are not what a person wrote.
+    assert got["comment"] == "rolling"
+
+
+def test_a_relayed_packet_is_not_heard_directly():
+    frame = ax25("W7SA-12", "APRS", b"!3206.21N/11056.22W_x", digis=("WIDE1-1", "WIDE2-1"))
+    packet = parse_ax25(frame)
+    assert packet.path == ("WIDE1-1", "WIDE2-1") and packet.direct
+    relayed = bytearray(frame)
+    relayed[20] |= 0x80  # the first digipeater has repeated it
+    packet = parse_ax25(bytes(relayed))
+    assert packet.path == ("WIDE1-1*", "WIDE2-1") and not packet.direct
+
+
+def test_meta_says_how_the_packet_reached_us():
+    reader = Direwolf()
+    frame = ax25("KD7ABC", "APRS", b"!3248.00N/11318.00W-home", digis=("WIDE2-1",))
+    (point,) = reader.feed(kiss_frame(frame), EPOCH)
+    assert point.meta["path"] == "WIDE2-1"
+    assert point.meta["comment"] == "home"
+    # A plain packet keeps its real destination; Mic-E has none worth showing.
+    assert point.meta["destination"] == "APRS"
+    destination, info = mic_e(32.8, -113.3, 30, 90)
+    (point,) = reader.feed(kiss_frame(ax25("KD7ABC-9", destination, info)), EPOCH)
+    assert "destination" not in point.meta and point.meta["message"]
+
+
+def test_a_point_says_whether_it_was_heard_directly():
+    heard = ax25("KD7ABC", "APRS", b"!3248.00N/11318.00W-home", digis=("WIDE2-1",))
+    (point,) = Direwolf().feed(kiss_frame(heard), EPOCH)
+    assert point.direct is True and point.via is None
+    assert point.to_json()["direct"] is True
+    relayed = bytearray(heard)
+    relayed[20] |= 0x80  # WIDE2-1 has repeated it
+    (point,) = Direwolf().feed(kiss_frame(bytes(relayed)), EPOCH)
+    assert point.direct is False
+    # An alias names nobody, so there is no station to credit.
+    assert point.via is None and "via" not in point.to_json()
+
+
+def test_a_value_too_long_to_send_whole_is_left_out_not_cut():
+    # Sonoran drops all of meta over its limits, so an impossible comment
+    # is dropped on its own here, and the rest of meta still goes.
+    reader = Direwolf()
+    huge = b"x" * 300
+    frame = ax25("KD7ABC", "APRS", b"!3248.00N/11318.00W-" + huge)
+    (point,) = reader.feed(kiss_frame(frame), EPOCH)
+    assert "comment" not in point.meta
+    assert point.meta["symbol"] == "/-"
+
+
+def test_via_names_the_last_station_that_repeated_it():
+    frame = ax25("KD7ABC", "APRS", b"!3248.00N/11318.00W-home", digis=("W7MOT-3", "WIDE2-1"))
+    relayed = bytearray(frame)
+    relayed[20] |= 0x80  # W7MOT-3 repeated it; WIDE2-1 has not
+    (point,) = Direwolf().feed(kiss_frame(bytes(relayed)), EPOCH)
+    assert point.direct is False and point.via == "w7mot-3"
+    # When the last used hop is an alias, an earlier callsign is not who
+    # we heard, so there is nobody to credit.
+    both = bytearray(frame)
+    both[20] |= 0x80
+    both[27] |= 0x80
+    (point,) = Direwolf().feed(kiss_frame(bytes(both)), EPOCH)
+    assert point.via is None
+
+
+def test_a_repeat_is_dropped_unless_the_later_copy_is_direct():
+    reader = Direwolf()
+    frame = ax25("KD7ABC", "APRS", b"!3248.00N/11318.00W-home", digis=("W7MOT-3",))
+    relayed = bytearray(frame)
+    relayed[20] |= 0x80
+    assert len(reader.feed(kiss_frame(bytes(relayed)), EPOCH)) == 1
+    # The same beacon, heard directly this time: it says something new
+    # about what this receiver can hear.
+    (point,) = reader.feed(kiss_frame(frame), EPOCH + 5)
+    assert point.direct is True
+    # A third copy says nothing new.
+    assert reader.feed(kiss_frame(frame), EPOCH + 6) == []
+    # After the window it is a new beacon again.
+    assert len(reader.feed(kiss_frame(frame), EPOCH + 40)) == 1
+
+
+def test_a_packet_from_the_internet_credits_the_gateway():
+    inner = b"CW1234>APRS,TCPIP*,qAC,T2TEST:!3248.00N/11318.00W_t072"
+    frame = ax25("K7XYG-10", "APRS", b"}" + inner)
+    (point,) = Direwolf().feed(kiss_frame(frame), EPOCH)
+    assert point.id == "cw1234"
+    assert point.direct is False and point.via == "k7xyg-10"
+    assert point.meta["third_party"] is True
+    assert point.meta["temperature_f"] == 72
+
+
+def test_an_object_is_its_own_thing_and_names_its_owner():
+    frame = ax25("KD7ABC", "APRS", b";FIELD DAY*111111z3248.00N/11318.00W-tent")
+    (point,) = Direwolf().feed(kiss_frame(frame), EPOCH)
+    assert point.id == ";field_day"
+    assert point.meta["owner"] == "kd7abc" and point.meta["object"] == "object"
+    assert point.meta["comment"] == "tent"
+    # A killed object says the thing is gone, not where it is.
+    killed = ax25("KD7ABC", "APRS", b";FIELD DAY_111111z3248.00N/11318.00W-tent")
+    assert Direwolf().feed(kiss_frame(killed), EPOCH) == []
+
+
+def test_an_item_is_read_like_an_object():
+    frame = ax25("KD7ABC", "APRS", b")REPEATER!3248.00N/11318.00Wr146.520")
+    (point,) = Direwolf().feed(kiss_frame(frame), EPOCH)
+    assert point.id == ";repeater" and point.meta["object"] == "item"
+
+
+@pytest.mark.parametrize(
+    "raw,blur",
+    [
+        (b"!3248.75N/11318.50W-exact", None),
+        (b"!3248.7 N/11318.5 W-one digit", 185),
+        (b"!3248.  N/11318.  W-two", 1852),
+        (b"!32  .  N/113  .  W-four", 111120),
+    ],
+)
+def test_a_blurred_position_says_how_blurred_it_is(raw, blur):
+    got = parse_position(raw)
+    assert got["precision_m"] == blur
+    # The point sits in the middle of what the sender was willing to say.
+    assert got["lat"] == pytest.approx(32.8125 if blur is None else got["lat"], abs=1e-4)
+    assert 32.4 < got["lat"] < 33.0

@@ -45,11 +45,38 @@ NO_TIME = "!="
 WITH_TIME = "/@"
 MIC_E = "`'\x1c\x1d"
 
+# A station may blank digits from the right to blur where it is, so the
+# minutes are digits or spaces.
 UNCOMPRESSED = re.compile(
-    rb"^(\d{2})(\d{2}\.\d{2})([NS])(.)(\d{3})(\d{2}\.\d{2})([EW])(.)", re.DOTALL
+    rb"^(\d{2})([\d ]{2}\.[\d ]{2})([NS])(.)(\d{3})([\d ]{2}\.[\d ]{2})([EW])(.)", re.DOTALL
 )
+# How wide the blur is, in minutes, for each blanked digit count. One
+# minute of latitude is 1852 m, so four blanked digits is about 111 km.
+BLUR_MINUTES = {1: 0.1, 2: 1.0, 3: 10.0, 4: 60.0}
+METRES_PER_MINUTE = 1852.0
+OBJECT, ITEM, THIRD_PARTY = ";", ")", "}"
+# An object or item name, with anything else collapsed to an underscore.
+NAME_UNSAFE = re.compile(r"[^a-z0-9._+-]+")
 COURSE_SPEED = re.compile(rb"^(\d{3})/(\d{3})")
 ALTITUDE = re.compile(rb"/A=(-?\d{6})")
+# A station's own radio details, not a course and speed.
+STATION_EXTENSION = re.compile(rb"^(PHG|RNG|DFS)[0-9A-Za-z]{4}")
+# A weather station's readings, in the order APRS writes them.
+WEATHER = (
+    (re.compile(rb"g(\d{3})"), "gust_kn", 0.868976),
+    (re.compile(rb"t(-?\d{2,3})"), "temperature_f", 1.0),
+    (re.compile(rb"r(\d{3})"), "rain_1h_in", 0.01),
+    (re.compile(rb"p(\d{3})"), "rain_24h_in", 0.01),
+    (re.compile(rb"P(\d{3})"), "rain_today_in", 0.01),
+    (re.compile(rb"h(\d{2})"), "humidity", 1.0),
+    (re.compile(rb"b(\d{5})"), "pressure_hpa", 0.1),
+)
+# The Mic-E message types, from the three message bits.
+MIC_E_MESSAGES = (
+    "Emergency", "Priority", "Special", "Committed",
+    "Returning", "In Service", "En Route", "Off Duty",
+)  # fmt: skip
+WEATHER_SYMBOL = "_"
 
 
 class KissFramer:
@@ -117,6 +144,19 @@ class Packet:
     source: str
     destination: str
     info: bytes
+    # The digipeaters, each marked with `*` once it has repeated the
+    # packet. Empty means the station reached us with nothing in between.
+    path: tuple[str, ...] = ()
+
+    @property
+    def direct(self) -> bool:
+        """True when no digipeater has repeated this packet.
+
+        A relayed packet says where the station is, but says nothing
+        about what this receiver can hear, so it must not count towards
+        the station's coverage.
+        """
+        return not any(hop.endswith("*") for hop in self.path)
 
 
 def parse_ax25(frame: bytes) -> Packet | None:
@@ -137,15 +177,41 @@ def parse_ax25(frame: bytes) -> Packet | None:
         return None
     if frame[at] != UI_CONTROL or frame[at + 1] != NO_LAYER3:
         return None  # not an APRS-carrying frame
-    return Packet(_callsign(addresses[1]), _callsign(addresses[0]), frame[at + 2 :])
+    # Bit 7 of an address's last byte is set once that digipeater has
+    # repeated the packet.
+    path = tuple(_callsign(hop) + ("*" if hop[6] & 0x80 else "") for hop in addresses[2:])
+    return Packet(_callsign(addresses[1]), _callsign(addresses[0]), frame[at + 2 :], path)
 
 
-def _degrees(degrees: bytes, minutes: bytes, hemisphere: bytes) -> float | None:
+def _degrees(degrees: bytes, minutes: bytes, hemisphere: bytes) -> tuple[float, int] | None:
+    """Degrees, and how many digits the sender blanked.
+
+    A blurred position is reported at the **middle** of what the sender
+    was willing to say, not at the corner that reading blanks as zeros
+    would give.
+    """
+    text = minutes.decode("latin-1")
+    digits = text.replace(".", "")
+    blanks = digits.count(" ")
+    if blanks and digits.rstrip() != digits.rstrip(" ").rstrip():
+        return None  # blanks must run from the right
+    if blanks and digits.strip(" ").count(" "):
+        return None
     try:
-        value = int(degrees) + float(minutes) / 60
+        filled = digits.replace(" ", "0")
+        value = int(degrees) + (int(filled[:2]) + int(filled[2:]) / 100) / 60
     except ValueError:
         return None
-    return -value if hemisphere in (b"S", b"W") else value
+    if blanks:
+        value += BLUR_MINUTES[min(blanks, 4)] / 2 / 60
+    return (-value if hemisphere in (b"S", b"W") else value), blanks
+
+
+def blur_metres(blanks: int) -> float | None:
+    """How far a blurred position could be out, in metres."""
+    if not blanks:
+        return None
+    return round(BLUR_MINUTES[min(blanks, 4)] * METRES_PER_MINUTE)
 
 
 def _base91(text: bytes) -> int:
@@ -157,13 +223,50 @@ def _base91(text: bytes) -> int:
     return value
 
 
-def _extension(rest: bytes) -> tuple[float | None, float | None]:
-    """Course and speed, when the comment starts with `090/036`."""
+def _extension(rest: bytes) -> tuple[float | None, float | None, bytes]:
+    """Course and speed, and what is left for the comment.
+
+    `090/036` is a course and speed. `PHG5132` and its kin describe the
+    station's own radio, not its movement. Both are seven characters.
+    """
     match = COURSE_SPEED.match(rest)
-    if match is None:
-        return None, None
-    course = int(match.group(1))
-    return (course % 360 if course else None), float(match.group(2))
+    if match is not None:
+        course = int(match.group(1))
+        return (course % 360 if course else None), float(match.group(2)), rest[7:]
+    if STATION_EXTENSION.match(rest) is not None:
+        return None, None, rest[7:]
+    return None, None, rest
+
+
+def parse_weather(rest: bytes) -> tuple[dict[str, Any], bytes]:
+    """Readings from a weather station, and what is left for the comment.
+
+    With the `_` symbol the field that looks like a course and speed is
+    the wind: direction in degrees, then speed in miles an hour. A
+    weather station does not move, so neither becomes track or ground
+    speed.
+    """
+    weather: dict[str, Any] = {}
+    wind = COURSE_SPEED.match(rest)
+    if wind is not None:
+        weather["wind_dir_deg"] = int(wind.group(1)) % 360
+        weather["wind_kn"] = round(int(wind.group(2)) * 0.868976, 1)
+        rest = rest[7:]
+    # Stations write the readings in any order, so keep taking whichever
+    # matches next until none does.
+    taking = True
+    while taking:
+        taking = False
+        for pattern, name, scale in WEATHER:
+            found = pattern.match(rest)
+            if found is None:
+                continue
+            value = int(found.group(1))
+            weather[name] = round(value * scale, 2) if scale != 1.0 else value
+            rest = rest[found.end() :]
+            taking = True
+            break
+    return weather, rest
 
 
 def _altitude_m(info: bytes) -> float | None:
@@ -186,19 +289,29 @@ def parse_position(info: bytes) -> dict[str, Any] | None:
 
     match = UNCOMPRESSED.match(body)
     if match is not None:
-        lat = _degrees(match.group(1), match.group(2), match.group(3))
-        lon = _degrees(match.group(5), match.group(6), match.group(7))
-        if lat is None or lon is None:
+        north = _degrees(match.group(1), match.group(2), match.group(3))
+        east = _degrees(match.group(5), match.group(6), match.group(7))
+        if north is None or east is None:
             return None
+        (lat, blanks), (lon, _) = north, east
+        symbol = chr(match.group(4)[0]) + chr(match.group(8)[0])
         rest = body[match.end() :]
-        course, speed = _extension(rest)
+        weather: dict[str, Any] = {}
+        course = speed = None
+        if symbol[1] == WEATHER_SYMBOL:
+            weather, rest = parse_weather(rest)
+        else:
+            course, speed, rest = _extension(rest)
         return {
             "lat": lat,
             "lon": lon,
             "course": course,
             "speed_kn": speed,
             "alt_m": _altitude_m(info),
-            "symbol": chr(match.group(4)[0]) + chr(match.group(8)[0]),
+            "symbol": symbol,
+            "weather": weather,
+            "comment": _comment(rest),
+            "precision_m": blur_metres(blanks),
         }
 
     # Compressed: a symbol table character, four characters of latitude,
@@ -211,21 +324,26 @@ def parse_position(info: bytes) -> dict[str, Any] | None:
             return None
         if not (-90 <= lat <= 90 and -180 <= lon <= 180):
             return None
+        symbol = chr(body[0]) + chr(body[9])
         course = speed = None
-        c, s = body[10], body[11]
-        if 33 <= c <= 122 and c != 32:
-            if chr(c) == "{":  # radio range, not a course
-                course = speed = None
-            else:
-                course = ((c - 33) * 4) % 360
-                speed = 1.08 ** (s - 33) - 1
+        c, s_byte = body[10], body[11]
+        if 33 <= c <= 122 and c != 32 and chr(c) != "{":
+            course = ((c - 33) * 4) % 360
+            speed = 1.08 ** (s_byte - 33) - 1
+        rest = body[13:]
+        weather = {}
+        if symbol[1] == WEATHER_SYMBOL:
+            weather, rest = parse_weather(rest)
+            course = speed = None
         return {
             "lat": lat,
             "lon": lon,
             "course": course,
             "speed_kn": speed,
             "alt_m": _altitude_m(info),
-            "symbol": chr(body[0]) + chr(body[9]),
+            "symbol": symbol,
+            "weather": weather,
+            "comment": _comment(rest),
         }
     return None
 
@@ -288,14 +406,60 @@ def parse_mic_e(destination: str, info: bytes) -> dict[str, Any] | None:
         course -= 400
     if not (-90 <= lat <= 90 and -180 <= lon <= 180):
         return None
+    tail = info[9:]
     return {
         "lat": lat,
         "lon": lon,
         "course": float(course % 360) if course else None,
         "speed_kn": float(speed),
-        "alt_m": _mic_e_altitude(body[6:]),
+        "alt_m": _mic_e_altitude(tail),
         "symbol": chr(body[7]) + chr(body[6]) if len(body) > 7 else None,
+        "weather": {},
+        "comment": _comment(_strip_mic_e_altitude(tail)),
+        "message": _mic_e_message(call),
     }
+
+
+def _mic_e_message(call: str) -> str | None:
+    """The message a Mic-E station is showing, from its first three digits.
+
+    Each of the first three destination characters carries one message
+    bit as well as a latitude digit. The bits name one of eight standard
+    messages, or a custom one when the characters come from A to K.
+    """
+    bits = 0
+    custom = False
+    for char in call[:3]:
+        if "A" <= char <= "K":
+            custom, bit = True, 1
+        elif "P" <= char <= "Z":
+            bit = 1
+        elif "0" <= char <= "9":
+            bit = 0
+        else:
+            return None  # `L` and the rest mean the digit was not sent
+        bits = bits * 2 + bit
+    if custom:
+        return f"Custom {7 - bits}" if bits != 7 else "Custom 0"
+    return MIC_E_MESSAGES[bits]
+
+
+def _strip_mic_e_altitude(tail: bytes) -> bytes:
+    """Remove the altitude and the radio type that precede the comment.
+
+    After the position, Mic-E carries three base 91 characters and `}`
+    for altitude, and most radios then name themselves with one or two
+    characters. Neither is anything a person wrote.
+    """
+    at = tail.find(b"}")
+    if 3 <= at <= 4:
+        tail = tail[at + 1 :]
+    if tail[:1] in (b"_", b"`", b"'"):
+        # `_` and a code name the radio; a backtick or quote repeats the type.
+        tail = tail[2:] if tail[:1] == b"_" else tail[1:]
+    elif tail[:1] in (b">", b"]"):
+        tail = tail[1:]
+    return tail
 
 
 def _mic_e_altitude(rest: bytes) -> float | None:
@@ -310,6 +474,80 @@ def _mic_e_altitude(rest: bytes) -> float | None:
     return float(metres) if -500 <= metres <= 60000 else None
 
 
+# Path entries that name no station: a packet whose last used hop is one
+# of these was repeated by somebody we cannot name.
+ALIASES = (
+    "WIDE", "TRACE", "RELAY", "ECHO", "GATE", "TEMP", "SGATE", "IGATE",
+    "NOGATE", "RFONLY", "TCPIP", "TCPXX", "QA",
+)  # fmt: skip
+# How long two copies of one packet are treated as the same one.
+DEDUP_S = 30.0
+
+
+def is_alias(hop: str) -> bool:
+    """True when a path entry is an alias rather than a callsign."""
+    return hop.upper().split("-")[0].rstrip("*").startswith(ALIASES)
+
+
+def via_of(path: tuple[str, ...]) -> str | None:
+    """The station that repeated this packet to us, if we can name it.
+
+    The digipeaters are in order, so the last one with its used bit set
+    is the one that transmitted what we decoded. An alias there names
+    nobody, and an earlier callsign is not who we heard.
+    """
+    used = [hop for hop in path if hop.endswith("*")]
+    if not used:
+        return None
+    last = used[-1].rstrip("*")
+    return None if is_alias(last) else last.lower()
+
+
+def parse_object(info: bytes) -> tuple[str, str, bytes] | None:
+    """An object or item: its name, which of the two it is, and the rest.
+
+    A killed object or item returns None: it is a station saying the
+    thing is gone, not saying where it is.
+    """
+    kind = chr(info[0])
+    if kind == OBJECT:
+        if len(info) < 18:
+            return None
+        name, flag, rest = info[1:10], chr(info[10]), info[11:]
+        if flag != "*":
+            return None  # killed
+        return _clean_name(name), "object", rest[7:]  # a timestamp, then the position
+    at = -1
+    for n, byte in enumerate(info[1:11], start=1):
+        if byte in (0x21, 0x5F):  # `!` live, `_` killed
+            at = n
+            break
+    if at < 4 or chr(info[at]) == "_":
+        return None
+    return _clean_name(info[1:at]), "item", info[at + 1 :]
+
+
+def _clean_name(raw: bytes) -> str:
+    name = raw.decode("latin-1", "replace").strip().lower()
+    return NAME_UNSAFE.sub("_", name).strip("_")[:9]
+
+
+def parse_third_party(info: bytes) -> tuple[str, bytes] | None:
+    """A packet that reached us from somewhere else: its source and payload.
+
+    `}` carries another station's packet, forwarded by a gateway. What we
+    heard is the gateway, never the station inside.
+    """
+    at = info.find(b":")
+    if at < 0:
+        return None
+    header = info[1:at].decode("latin-1", "replace")
+    source, _, _ = header.partition(">")
+    if not source:
+        return None
+    return source.strip().lower(), info[at + 1 :]
+
+
 class Direwolf:
     """Turn direwolf's KISS stream into APRS observations."""
 
@@ -318,6 +556,8 @@ class Direwolf:
         self.frames = KissFramer()
         self.bad = 0
         self.no_position = 0
+        self.repeats = 0
+        self._seen: dict[tuple[str, bytes], tuple[float, bool]] = {}
 
     def feed(self, data: bytes, now: float) -> list[Observation]:
         out: list[Observation] = []
@@ -329,25 +569,76 @@ class Direwolf:
                 continue
             if point is not None:
                 out.append(point)
+        if len(self._seen) > 4000:
+            self._forget(now)
         return out
+
+    def _forget(self, now: float) -> None:
+        self._seen = {key: seen for key, seen in self._seen.items() if now - seen[0] <= DEDUP_S}
+
+    def _repeat(self, source: str, info: bytes, direct: bool, now: float) -> bool:
+        """True when this is another copy of a packet we already sent.
+
+        A packet travels several paths, so the same beacon arrives more
+        than once. A later copy that came to us directly is still sent,
+        because only a direct copy says what this receiver can hear.
+        """
+        key = (source, info)
+        seen = self._seen.get(key)
+        if seen is not None and now - seen[0] <= DEDUP_S and not (direct and not seen[1]):
+            self.repeats += 1
+            return True
+        self._seen[key] = (now, direct or (seen[1] if seen else False))
+        return False
 
     def frame(self, frame: bytes, now: float) -> Observation | None:
         packet = parse_ax25(frame)
         if packet is None:
             self.bad += 1
             return None
-        if packet.info[:1].decode("latin-1") in MIC_E:
-            found = parse_mic_e(packet.destination, packet.info)
+
+        source, info = packet.source, packet.info
+        direct, via = packet.direct, via_of(packet.path)
+        third_party = False
+        if info[:1].decode("latin-1") == THIRD_PARTY:
+            inner = parse_third_party(info)
+            if inner is None:
+                self.bad += 1
+                return None
+            # Whatever the inner path says, what we heard is the gateway.
+            source, info = inner
+            third_party, direct = True, False
+            via = via or packet.source
+        if not info:
+            self.no_position += 1
+            return None
+
+        owner = object_kind = None
+        if info[:1].decode("latin-1") in (OBJECT, ITEM):
+            placed = parse_object(info)
+            if placed is None:
+                self.no_position += 1
+                return None
+            name, object_kind, rest = placed
+            # Every identity we send is lower case, as Sonoran stores them.
+            owner, source = source.lower(), ";" + name
+            info = b"!" + rest  # the rest reads as a position report
+            via = via or (owner if not direct else None)
+
+        if info[:1].decode("latin-1") in MIC_E:
+            found = parse_mic_e(packet.destination, info)
         else:
-            found = parse_position(packet.info)
+            found = parse_position(info)
         if found is None:
             self.no_position += 1
+            return None
+        if self._repeat(source, packet.info, direct, now):
             return None
 
         speed = found.get("speed_kn")
         point = observation(
             self.kind,
-            packet.source,
+            source,
             now,
             found["lat"],
             found["lon"],
@@ -355,10 +646,21 @@ class Direwolf:
             alt_ref="geom" if found.get("alt_m") is not None else None,
             gs_kn=speed if speed else None,
             track_deg=found.get("course"),
+            direct=direct,
+            via=None if direct else via,
+            precision_m=found.get("precision_m"),
             meta={
                 "symbol": found.get("symbol"),
-                "destination": packet.destination,
-                "comment": _comment(packet.info),
+                # Mic-E's destination is encoded latitude, which says
+                # nothing to a reader; it carries the message instead.
+                "destination": None if "message" in found else packet.destination,
+                "message": found.get("message"),
+                "comment": found.get("comment"),
+                "path": ",".join(packet.path) or None,
+                "owner": owner,
+                "object": object_kind,
+                "third_party": True if third_party else None,
+                **found.get("weather", {}),
             },
         )
         if point is None:
@@ -366,8 +668,13 @@ class Direwolf:
         return point
 
 
-def _comment(info: bytes) -> str | None:
-    """The tail a station types, trimmed to something worth sending."""
-    text = info.decode("latin-1", "replace").strip()
-    text = "".join(char for char in text if char.isprintable())
-    return text[-60:] or None
+def _comment(rest: bytes) -> str | None:
+    """The free text a station types, whole.
+
+    Only what is left after the position and its extensions, and never
+    shortened: an AX.25 information field holds at most 256 characters,
+    so a comment always fits what Sonoran stores.
+    """
+    text = ALTITUDE.sub(b"", rest).decode("latin-1", "replace")
+    text = "".join(char for char in text if char.isprintable()).strip()
+    return text or None

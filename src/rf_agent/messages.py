@@ -18,8 +18,12 @@ from typing import Any
 
 VERSION = 1
 MAX_OBS = 100
-# Sonoran caps `meta` at 1 kB. Ours is a few short strings; this is a guard.
-MAX_META_BYTES = 512
+# Sonoran caps `meta` at 4 kB, and each value at 256 characters, which is
+# the most an AX.25 information field can hold. Over either, it drops the
+# whole of `meta` rather than shorten anything, so the agent keeps to the
+# same limits: a value that cannot be sent whole is left out, never cut.
+MAX_META_BYTES = 4096
+MAX_META_VALUE_CHARS = 256
 # What a thing's identity looks like, per kind. It is the natural
 # identity of the thing heard (design 4.2), and Sonoran checks it again:
 # an id outside these shapes is not stored, so a bad one is dropped here
@@ -32,7 +36,9 @@ AIRCRAFT_ID = re.compile(r"^~?[0-9a-f]{6}$")
 ID_RULES = {
     "adsb": AIRCRAFT_ID,
     "uat": AIRCRAFT_ID,
-    "aprs": re.compile(r"^[a-z0-9]{1,6}(-[a-z0-9]{1,2})?$"),
+    # A callsign with its SSID, or an object or item a station placed,
+    # which APRS names globally and `;` keeps apart from any callsign.
+    "aprs": re.compile(r"^(;[a-z0-9._+-][a-z0-9_.+-]{0,8}|[a-z0-9]{1,9}(-[a-z0-9]{1,2})?)$"),
     "sonde": re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$"),
     "ism": re.compile(r"^[a-z0-9][a-z0-9_.-]{0,63}$"),
 }
@@ -55,6 +61,18 @@ class Observation:
     gs_kn: float | None = None
     track_deg: float | None = None
     rssi_db: float | None = None
+    # True when the thing reached this receiver with nothing in between.
+    # APRS sets it; a relayed packet says where a station is, but nothing
+    # about what this receiver hears. None means it is not known.
+    direct: bool | None = None
+    # The station whose transmission we decoded, when that is not the
+    # thing itself: the last digipeater to repeat it, or the gateway of a
+    # packet that came from the internet. None when we heard the thing.
+    via: str | None = None
+    # How far the sender blurred its own position, in metres. APRS lets a
+    # station blank digits to say "somewhere around here". None means it
+    # said exactly where it is.
+    precision_m: float | None = None
     meta: dict[str, Any] = field(default_factory=dict)
 
     def to_json(self) -> dict[str, Any]:
@@ -65,7 +83,16 @@ class Observation:
             "lat": self.lat,
             "lon": self.lon,
         }
-        for name in ("alt_m", "alt_ref", "gs_kn", "track_deg", "rssi_db"):
+        for name in (
+            "alt_m",
+            "alt_ref",
+            "gs_kn",
+            "track_deg",
+            "rssi_db",
+            "direct",
+            "via",
+            "precision_m",
+        ):
             value = getattr(self, name)
             if value is not None:
                 out[name] = value
@@ -106,6 +133,9 @@ def observation(
     gs_kn: Any = None,
     track_deg: Any = None,
     rssi_db: Any = None,
+    direct: bool | None = None,
+    via: str | None = None,
+    precision_m: Any = None,
     meta: dict[str, Any] | None = None,
 ) -> Observation | None:
     """Return a checked observation, or None when it is not a usable point.
@@ -124,7 +154,11 @@ def observation(
         return None
     alt = _within(alt_m, -500, 60000, 0)
     track = _number(track_deg)
-    clean_meta = {k: v for k, v in (meta or {}).items() if v not in (None, "")}
+    clean_meta = {
+        k: v
+        for k, v in (meta or {}).items()
+        if v not in (None, "") and not (isinstance(v, str) and len(v) > MAX_META_VALUE_CHARS)
+    }
     if len(json.dumps(clean_meta)) > MAX_META_BYTES:
         clean_meta = {}
     return Observation(
@@ -138,8 +172,19 @@ def observation(
         gs_kn=_within(gs_kn, 0, 2000, 1),
         track_deg=round(track % 360, 1) if track is not None else None,
         rssi_db=_within(rssi_db, -200, 50, 1),
+        direct=direct if isinstance(direct, bool) else None,
+        via=_station(via),
+        precision_m=_within(precision_m, 0, 200_000, 0),
         meta=clean_meta,
     )
+
+
+def _station(call: str | None) -> str | None:
+    """A callsign we relayed through, checked the way an id is."""
+    if not isinstance(call, str):
+        return None
+    ident = call.strip().lower()
+    return ident if ID_RULES["aprs"].match(ident) and not ident.startswith(";") else None
 
 
 def batch(station: str, kind: str, obs: list[Observation], sent: float) -> dict[str, Any]:
