@@ -233,10 +233,16 @@ Three more decoders, each already serving what the agent needs.
 ```
 
 - **APRS** is read from direwolf's KISS stream: uncompressed, compressed
-  and Mic-E positions all decode. Packets with no position are skipped,
-  and so are objects and items, which are things a station places on the
-  map rather than the station itself. APRS is public by design and is
-  stored as heard.
+  and Mic-E positions all decode, including positions a station has
+  blurred on purpose, which say how blurred they are. Objects and items a
+  station places are sent as things of their own, named `;` and the
+  object's name, with the sender in `meta.owner`. Packets with no
+  position are skipped, and so are killed objects.
+  Each point says whether we heard the station **directly**, and names
+  the digipeater or gateway we heard instead when we did not: a packet
+  relayed from 150 km away says where that station is, but nothing about
+  what your receiver can hear. One packet arriving by several paths is
+  sent once. APRS is public by design and is stored as heard.
 - **Radiosondes** come from `radiosonde_auto_rx`, whose summaries carry
   the sonde's own GPS position. Thinning cuts a two hour flight to one
   point every five seconds.

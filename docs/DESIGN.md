@@ -256,11 +256,27 @@ JSON, one object per message, a batch of up to 100 observations.
 
 - `id` is the natural identity of the thing heard: the ICAO hex for
   aircraft, the callsign and SSID for APRS, the serial for a sonde, the
-  model and id for a sensor.
+  model and id for a sensor. An APRS object or item is a thing of its
+  own, named `;` and the object's name, which no callsign can collide
+  with. Its sender is `meta.owner`.
+- `direct` says the thing reached us with nothing in between. A relayed
+  APRS packet still says where a station is, but says nothing about what
+  this receiver hears, so only a direct one counts towards coverage.
+- `via` names the station we actually decoded when that is not the thing
+  itself: the last digipeater to repeat it, or the gateway of a packet
+  that came from the internet. An alias such as `WIDE2-1` names nobody,
+  so `via` is empty there.
+- `precision_m` on an observation is how far the **sender** blurred its
+  own position, which APRS lets a station do by blanking digits. The
+  heartbeat's `precision_m` is the opposite: how much **we** rounded our
+  own antenna.
 - `t` is when the receiver heard it, from the receiver's clock. See 5.3.
 - `rssi_db` is kept because it is the only thing that says how well a
   station hears. It is what the receiver layer in 7.2 is built from.
-- `meta` is per kind and capped at 1 kB.
+- `meta` is per kind, capped at 4 kB, with each value at most 256
+  characters, the most an AX.25 information field holds. A value too
+  long to send whole is left out; nothing is shortened, because half
+  a comment reads as if the station wrote it that way.
 
 A `spectrum` message is different: one per minute, with the bins as
 arrays rather than a list of things heard.
@@ -296,7 +312,7 @@ Without it, ADS-B is about one message per aircraft per second.
 |---|---|
 | `adsb`, `uat` | One point per aircraft every `ADSB_INTERVAL_S` (20 s), plus the first and last point of each visit. |
 | `sonde` | One point every 5 s. A flight lasts about two hours. |
-| `aprs`, `ism` | Every packet, as received. They are already slow. |
+| `aprs`, `ism` | Every packet, as received. They are already slow. One APRS packet arrives by several paths, so a copy of the same packet within 30 s is dropped, unless the later copy came to us directly. |
 | `spectrum` | One summary per minute, whatever the sweep rate. |
 
 ---
