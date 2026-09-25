@@ -107,12 +107,22 @@ So `rf-agent` reads the network output the decoder already offers.
 Every decoder in 1.1 serves several readers at once. That is how one
 dongle feeds five aggregators today.
 
+Two of them only broadcast: `rtl_433` and `radiosonde_auto_rx` send
+datagrams and accept no connection. Those the agent receives on a UDP
+socket, which serves nothing and answers nobody, and every datagram is
+treated as untrusted input. Everything else it connects out to.
+
+A weather sensor transmits no position of its own. Its point carries the
+station's rounded position, so it is drawn where it was heard, not where
+it is: every sensor one station hears lands on the same point, and two
+stations hearing one sensor will disagree about where it is.
+
 | Decoder | What `rf-agent` reads |
 |---|---|
 | `readsb`, `dump1090-fa` | Beast on TCP 30005, or `aircraft.json` over HTTP |
 | `dump978-fa` | JSON on TCP 30979 |
 | `direwolf` | KISS on TCP 8001 (several clients allowed) |
-| `rtl_433` | JSON over UDP, or its own MQTT output |
+| `rtl_433` | JSON over UDP |
 | `radiosonde_auto_rx` | its UDP summary broadcast, port 55672 |
 | `rtl_power` | its CSV sweep lines, on a pipe or a file (see 3.5) |
 

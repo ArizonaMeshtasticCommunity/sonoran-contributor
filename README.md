@@ -6,7 +6,7 @@
 Local receivers · MQTT to one broker · stored and mapped by Sonoran.
 
 [![Contract](https://img.shields.io/badge/contract-v1-EA6A3A?style=flat-square)](schema/rf-message-v1.schema.json)
-[![Phase](https://img.shields.io/badge/phase-2%20900%20MHz%20band-2A6DB2?style=flat-square)](#-roadmap)
+[![Phase](https://img.shields.io/badge/phases-1--4%20built-2A6DB2?style=flat-square)](#-roadmap)
 [![CI](https://github.com/ArizonaMeshtasticCommunity/rf-map/actions/workflows/ci.yml/badge.svg)](https://github.com/ArizonaMeshtasticCommunity/rf-map/actions/workflows/ci.yml)
 [![Sources](https://img.shields.io/badge/sources-local%20only-3776AB?style=flat-square)](#-what-it-reads)
 [![Sonoran](https://img.shields.io/badge/stored%20by-Sonoran-EA6A3A?style=flat-square)](https://github.com/ArizonaMeshtasticCommunity/beta-sonoran)
@@ -33,7 +33,7 @@ traffic control and not for navigation.
 - 🤝 **Never takes your dongle** — reads the decoder's network port, so FlightAware, FR24 and every other feed keep running.
 - 🪶 **Thinned at the edge** — one point per aircraft every 20 s leaves the site, not one a second.
 - 📡 **Receiver reach** — each station's heartbeat says where it is and what it heard, so the map shows where the network hears, measured.
-- 🔒 **Private by default** — station positions rounded before they leave; weather-sensor decoding is allow-list only.
+- 🔒 **Private by default** — station positions rounded before they leave; weather-sensor decoding is allow-list only, and empty until you name the models.
 - 📜 **One contract** — [`schema/rf-message-v1.schema.json`](schema/rf-message-v1.schema.json), the same file Sonoran checks every message against.
 
 ## 🧩 How it fits together
@@ -60,9 +60,9 @@ several readers at once.
 | ADS-B | `readsb`, `dump1090-fa` | Beast on TCP 30005, or `aircraft.json` | 1090 MHz | **1** |
 | UAT | `dump978-fa` | JSON on TCP 30979 | 978 MHz | **1** |
 | Spectrum | `rtl_power` in `rf-sweep`, its own dongle | sweep lines on TCP 30950 | 902–928 MHz | **2** |
-| APRS | `direwolf`, off the air | KISS on TCP 8001 | 144.39 MHz | 3 |
-| Radiosondes | `radiosonde_auto_rx`, upload off | UDP 55672 | 400–406 MHz | 4 |
-| Weather sensors | `rtl_433`, allow-listed | JSON over UDP | 433 / 915 MHz | 4 |
+| APRS | `direwolf`, off the air | KISS on TCP 8001 | 144.39 MHz | **3** |
+| Radiosondes | `radiosonde_auto_rx`, upload off | UDP 55672 | 400–406 MHz | **4** |
+| Weather sensors | `rtl_433`, allow-listed | JSON over UDP | 433 / 915 MHz | **4** |
 
 ## 🚀 Quick start
 
@@ -110,7 +110,7 @@ Every setting is an environment variable.
 | `STATION_PRECISION_M` | How much to round the station position before it is sent. | `1000` |
 | `ADSB_INTERVAL_S` | Seconds between two points for one aircraft. At least 1. | `20` |
 | `LOG_LEVEL` | `DEBUG`, `INFO`, `WARNING` or `ERROR`. | `INFO` |
-| `ISM_ALLOW` | `rtl_433` model names to pass. Empty means none pass. Phase 4. | empty |
+| `ISM_ALLOW` | `rtl_433` model names to pass, comma separated, case ignored. Empty means none pass. | empty |
 | `SITE_MESH_NODE` | The Meshtastic node at this site, such as `!a1b2c3d4`, if any, so its own bursts are not read as interference. | — |
 
 `rf-sweep` has settings of its own; see [the 900 MHz band](#-the-900-mhz-band).
@@ -137,6 +137,16 @@ The scheme of each URL picks the reader.
 | `file:///run/readsb/aircraft.json` | the same, from a mounted file | — |
 | `tcp://host:port` | dump978-fa JSON lines | 30979 |
 | `spectrum=tcp://host:port` | `rf-sweep` sweep lines | 30950 |
+| `aprs=kiss://host:port` | direwolf's KISS stream | 8001 |
+| `sonde=udp://0.0.0.0:port` | `radiosonde_auto_rx` summaries | 55672 |
+| `ism=udp://0.0.0.0:port` | `rtl_433` JSON | — |
+
+`radiosonde_auto_rx` and `rtl_433` only broadcast, so those two are
+received on a UDP socket rather than connected to. The socket serves
+nothing and answers nobody, and every datagram is treated as untrusted
+input. Run `rtl_433` with `-F syslog:<agent>:<port>`, and turn every
+internet upload off in `auto_rx`: this map carries what our own
+receivers heard.
 
 Only positions this receiver heard leave the site. From `aircraft.json`,
 MLAT positions (computed by an aggregator's server and fed back) and
@@ -210,6 +220,36 @@ compare one station with itself over time, never two stations. The
 band view shows what occupies the band; it does not say what the thing
 is.
 
+## 📻 APRS, radiosondes and sensors
+
+Three more decoders, each already serving what the agent needs.
+
+```yaml
+      SOURCES: >-
+        aprs=kiss://direwolf:8001,
+        sonde=udp://0.0.0.0:55672,
+        ism=udp://0.0.0.0:10433
+      ISM_ALLOW: Acurite-Tower,Fineoffset-WH51
+```
+
+- **APRS** is read from direwolf's KISS stream: uncompressed, compressed
+  and Mic-E positions all decode. Packets with no position are skipped,
+  and so are objects and items, which are things a station places on the
+  map rather than the station itself. APRS is public by design and is
+  stored as heard.
+- **Radiosondes** come from `radiosonde_auto_rx`, whose summaries carry
+  the sonde's own GPS position. Thinning cuts a two hour flight to one
+  point every five seconds.
+- **Weather sensors** come from `rtl_433`, **and nothing passes until
+  you name the models**. `rtl_433` decodes tyre sensors, doorbells and
+  car keys in neighbours' houses as readily as weather stations, so
+  `ISM_ALLOW` is empty by default and Sonoran applies the same list
+  again. Run `rtl_433 -F syslog:<agent host>:10433`; the model name is
+  the one it prints, such as `Acurite-Tower`.
+
+A sensor transmits no position, so its point carries the station's
+rounded position. It says where the sensor was heard, not where it is.
+
 ## 📨 The message contract
 
 | Topic | Message | QoS |
@@ -226,7 +266,7 @@ that is present but wrong makes the whole message invalid.
 |------|-----------------|
 | `adsb`, `uat` | one point per aircraft every `ADSB_INTERVAL_S`, plus the first and last of each visit |
 | `sonde` | one point every 5 s |
-| `aprs`, `ism` | every packet, as received |
+| `aprs`, `ism` | every packet, as received: both are slow already |
 | `spectrum` | one summary per minute |
 
 Examples of each message are in [`examples/`](examples). The heartbeat's
@@ -272,8 +312,8 @@ changes, never edit it by hand.
 
 1. **Aircraft** — ADS-B and UAT readers, thinning, heartbeat. Built, here and in Sonoran.
 2. **The 900 MHz band** — `rf-sweep` and the spectrum summary. Built here; Sonoran validates it and will store it and draw the waterfall next.
-3. **APRS** — the APRS reader, off the air.
-4. **Radiosondes and weather sensors** — two more readers and the allow-lists.
+3. **APRS** — the APRS reader, off the air. Built.
+4. **Radiosondes and weather sensors** — two more readers and the allow-list. Built.
 
 ## 📚 Documentation
 

@@ -54,8 +54,12 @@ check this, not only the examples.
 - **Privacy** (design 8). Round the station position to
   `STATION_PRECISION_M` before it leaves the site. `ISM_ALLOW` is empty by
   default, so no `rtl_433` device passes until a member names it.
-- **No listening ports, no privileges.** The agent only makes outgoing
-  connections: to its decoders and to the broker, over TLS.
+- **No listening ports, no privileges.** The agent makes outgoing
+  connections: to its decoders and to the broker, over TLS. The one
+  exception is a decoder that only broadcasts and accepts no connection,
+  `radiosonde_auto_rx` and `rtl_433`. Those are read from a UDP socket,
+  which serves nothing and accepts no connection, and every datagram is
+  treated as untrusted input. Nothing else binds a port.
 - **Publish to the station's own topic only**, `rf/v1/<station>/...`. The
   broker enforces it; the agent must not rely on that.
 - **Never exit on bad input.** A bad frame is counted and skipped. A
@@ -86,6 +90,19 @@ TCP. The agent reads them with `spectrum=tcp://...` and sends one
 summary a minute (`src/rf_agent/spectrum.py`). The agent still never
 opens a device.
 
+### Phases 3 and 4, APRS, radiosondes and sensors
+
+`src/rf_agent/aprs.py` reads direwolf's KISS stream over TCP and decodes
+AX.25, then APRS positions in all three shapes: uncompressed, compressed
+and Mic-E. A packet with no position is skipped, and so are objects and
+items, which are things a station places rather than the station itself.
+
+`src/rf_agent/sonde.py` reads `radiosonde_auto_rx` summaries and
+`src/rf_agent/ism.py` reads `rtl_433`, both over UDP. A sensor transmits
+no position, so its point carries the station's **rounded** position:
+it says where it was heard, not where it is. `ISM_ALLOW` is empty by
+default and Sonoran applies the same list again.
+
 ## 5. Testing
 
 - Readers are tested with decoder output: a Beast capture, an
@@ -96,6 +113,9 @@ opens a device.
   for invented aircraft, in each decoder's exact format.
 - Spectrum summaries are tested with an `rtl_power` capture: a steady
   carrier must land in its bin, and a bursty one must raise its `busy`.
+- APRS is tested against the examples in the APRS 1.01 specification,
+  and Mic-E against an encoder in the fixtures, since its format is not
+  written out there in a form a test can use directly.
 - Thinning has unit tests that count points in and out.
 - Every message a test builds is checked against the schema.
 - Do not run heavy tests on a machine that also serves production.
