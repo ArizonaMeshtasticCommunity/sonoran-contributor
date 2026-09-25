@@ -14,8 +14,10 @@ CONFIG = load(
         "BROKER_URL": "mqtts://broker.example",
         "SOURCES": (
             "adsb=beast://readsb,adsb=http://readsb/data/aircraft.json,"
-            "uat=tcp://dump978,spectrum=tcp://rf-sweep"
+            "uat=tcp://dump978,spectrum=tcp://rf-sweep,"
+            "aprs=kiss://direwolf,sonde=udp://0.0.0.0,ism=udp://0.0.0.0:10433"
         ),
+        "ISM_ALLOW": "Acurite-Tower",
         "SITE_MESH_NODE": "!a1b2c3d4",
         "STATION_LAT": str(SITE[0]),
         "STATION_LON": str(SITE[1]),
@@ -35,7 +37,8 @@ async def test_every_message_passes_the_validator(
     tmp_path, beast_capture, aircraft_snapshots, dump978_capture
 ):
     pipeline = Pipeline(CONFIG)
-    beast, snapshots, uat, sweep = (handler_for(s, CONFIG, pipeline) for s in CONFIG.sources)
+    handlers = [handler_for(s, CONFIG, pipeline) for s in CONFIG.sources]
+    beast, snapshots, uat, sweep, aprs, sonde, ism = handlers
     assert beast.__self__.station == SITE  # the true position, used locally
 
     tracker = beast.__self__
@@ -44,6 +47,11 @@ async def test_every_message_passes_the_validator(
         pipeline.accept(snapshots(snapshot, EPOCH + n))
     pipeline.accept(uat(dump978_capture, EPOCH))
     sweep((FIXTURES / "rtl_power.csv").read_bytes(), EPOCH + 30)
+    pipeline.accept(aprs((FIXTURES / "aprs.kiss").read_bytes(), EPOCH))
+    for n, line in enumerate((FIXTURES / "sonde.jsonl").read_bytes().splitlines()):
+        pipeline.accept(sonde(line, EPOCH + n))
+    for line in (FIXTURES / "rtl433.jsonl").read_bytes().splitlines():
+        pipeline.accept(ism(line, EPOCH))
     pipeline.expire(EPOCH + 10_000)
 
     client = Recorder()
@@ -64,4 +72,8 @@ async def test_every_message_passes_the_validator(
     assert validate.main(paths) == 0
     topics = [topic for topic, _ in client.published]
     assert topics.count("rf/v1/test-site/spectrum") == 1
+    # Every kind this station serves reached its own topic.
+    assert {t.rsplit("/", 1)[1] for t in topics} == {
+        "adsb", "uat", "spectrum", "aprs", "sonde", "ism", "status",
+    }  # fmt: skip
     assert json.loads(client.published[-1][1])["mesh_node"] == "!a1b2c3d4"

@@ -1,0 +1,19 @@
+{
+  "v": 1,
+  "station": "tempe-roof",
+  "kind": "aprs",
+  "sent": "2026-09-22T18:00:00Z",
+  "obs": [
+    {
+      "id": "kd7abc-9",
+      "t": "2026-09-22T17:59:58.2Z",
+      "lat": 33.52,
+      "lon": -112.07,
+      "alt_m": 380,
+      "alt_ref": "geom",
+      "gs_kn": 55,
+      "track_deg": 200,
+      "meta": { "symbol": "/>", "destination": "S32U6T", "comment": "on the road" }
+    }
+  ]
+}

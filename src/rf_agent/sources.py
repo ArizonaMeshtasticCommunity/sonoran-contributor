@@ -102,6 +102,53 @@ async def read_stream(
         await asyncio.sleep(delay)
 
 
+async def read_datagrams(
+    name: str,
+    host: str,
+    port: int,
+    handler: Handler,
+    sink: Sink,
+    backoff: Backoff | None = None,
+) -> None:
+    """Receive what a decoder broadcasts over UDP, forever.
+
+    `radiosonde_auto_rx` and `rtl_433` only broadcast; they accept no
+    connection. So this is the one place the agent binds a socket, and
+    it is a UDP one: no connection is accepted, nothing is served, and
+    anything may send to it. Every datagram is treated as untrusted
+    input and a bad one is counted and skipped, like a bad frame.
+    """
+    backoff = backoff or Backoff()
+    loop = asyncio.get_running_loop()
+
+    class _Receiver(asyncio.DatagramProtocol):
+        def datagram_received(self, data: bytes, addr: object) -> None:
+            _handle(name, handler, data, sink)
+
+        def error_received(self, exc: Exception) -> None:
+            logger.warning("%s: %s", name, exc)
+
+    while True:
+        transport = None
+        try:
+            transport, _ = await loop.create_datagram_endpoint(_Receiver, local_addr=(host, port))
+            logger.info("%s: listening for datagrams on %s:%d", name, host, port)
+            backoff.reset()
+            # Nothing to wait for: the protocol is called as datagrams
+            # arrive. Sleep until the socket fails or the task is cancelled.
+            await asyncio.Event().wait()
+        except OSError as exc:
+            logger.warning("%s: %s", name, exc)
+        except Exception:
+            logger.exception("%s: receiver failed", name)
+        finally:
+            if transport is not None:
+                transport.close()
+        delay = backoff.next()
+        logger.info("%s: retry in %.0f s", name, delay)
+        await asyncio.sleep(delay)
+
+
 def fetch(url: str, timeout: float = 5.0) -> bytes:
     """Read a local `aircraft.json`, over HTTP or from a file."""
     if urlsplit(url).scheme == "file":

@@ -22,10 +22,14 @@ from pathlib import Path
 from rf_agent.beast import Frame, encode_frame
 
 from encode import (
+    aprs_compressed,
+    ax25,
     es,
     gnss_position_me,
     ident_me,
     identity_reply,
+    kiss_frame,
+    mic_e,
     position_me,
     surface_me,
     velocity_me,
@@ -241,8 +245,93 @@ def rtl_power() -> str:
     return "\n".join(lines) + "\n"
 
 
+def aprs() -> bytes:
+    """A direwolf KISS stream: three stations, and packets with no position."""
+    frames: list[bytes] = []
+    # A fixed station, uncompressed, with an altitude and a comment.
+    for _ in range(3):
+        frames.append(ax25("KD7ABC", "APRS", b"!3248.00N/11318.00W-Shack, 240 m ASL /A=000787"))
+    # A walker, compressed, moving north east.
+    for n in range(5):
+        lat, lon = moved(32.76, -113.34, 3, 45, n * 60)
+        frames.append(ax25("W1XYZ-5", "APRS", aprs_compressed(lat, lon)))
+    # A car, Mic-E, which is how most mobile stations report.
+    for n in range(12):
+        lat, lon = moved(32.84, -113.26, 55, 200, n * 30)
+        dest, info = mic_e(lat, lon, 55, 200)
+        frames.append(ax25("KD7ABC-9", dest, info))
+    # Packets that carry no position at all.
+    frames.append(ax25("N0CALL", "APRS", b":KD7ABC   :thanks for the lift{001"))
+    frames.append(ax25("KD7ABC", "APRS", b">Monitoring 146.520"))
+    frames.append(ax25("KD7ABC", "APRS", b"T#005,199,000,255,073,123,01101001"))
+    # An object a station places on the map: not the station, so skipped.
+    frames.append(ax25("KD7ABC", "APRS", b";FIELD DAY*111111z3248.00N/11318.00W-tent"))
+    # A comment holding the bytes KISS has to escape.
+    frames.append(ax25("W1XYZ-5", "APRS", b"!3245.00N/11320.00W-edge \xc0 and \xdb here"))
+
+    out = bytearray()
+    for n, frame in enumerate(frames):
+        out += kiss_frame(frame)
+        if n % 7 == 0:
+            out += b"\xc0"  # an empty frame between two others
+        if n % 11 == 0:
+            out += b"junk not a frame"
+    return bytes(out)
+
+
+def sonde() -> str:
+    """radiosonde_auto_rx summaries, one datagram per line."""
+    lines = []
+    for n in range(50):
+        lat, lon = moved(32.90, -113.10, 25, 70, n)
+        lines.append(
+            json.dumps(
+                {"type": "PAYLOAD_SUMMARY", "callsign": "S4132077",
+                 "latitude": round(lat, 5), "longitude": round(lon, 5),
+                 "altitude": 1200 + n * 55, "speed": 46.3, "heading": 70.0,
+                 "model": "RS41", "freq": "404.100 MHz", "freq_float": 404.1,
+                 "sats": 9, "batt": 2.8, "snr": 14.2, "temp": -12.4,
+                 "time": f"18:0{n // 10}:{n % 60:02d}", "comment": "RS41 404.100 MHz"},
+                separators=(",", ":"),
+            )
+        )  # fmt: skip
+        if n % 20 == 0:
+            # auto_rx also announces itself; not a payload.
+            lines.append(json.dumps({"type": "STATION", "callsign": "TEST-RX"}))
+    lines.append("{not json")
+    return "\n".join(lines) + "\n"
+
+
+def rtl433() -> str:
+    """rtl_433 devices, one datagram per line, bare and syslog wrapped."""
+    lines = []
+    for n in range(20):
+        reading = {"time": f"2026-09-22 18:{n:02d}:00", "model": "Acurite-Tower", "id": 1234,
+                   "channel": "A", "battery_ok": 1, "temperature_C": 21.5 + n * 0.1,
+                   "humidity": 44, "mic": "CHECKSUM", "rssi": -11.2}  # fmt: skip
+        line = json.dumps(reading, separators=(",", ":"))
+        # rtl_433 wraps its JSON in a syslog line when sent with -F syslog.
+        lines.append(f"<165>1 2026-09-22T18:{n:02d}:00Z rtl433 - - - {line}" if n % 4 else line)
+        if n % 5 == 0:
+            # A model nobody allow-listed: a neighbour's tyre sensor.
+            lines.append(
+                json.dumps({"time": "2026-09-22 18:00:00", "model": "Schrader-TPMS",
+                            "id": 998877, "pressure_kPa": 240}, separators=(",", ":"))
+            )  # fmt: skip
+    # A device with a channel but no id.
+    lines.append(
+        json.dumps({"model": "Acurite-Tower", "channel": "B", "temperature_C": 19.0},
+                   separators=(",", ":"))
+    )  # fmt: skip
+    lines.append("not json at all")
+    return "\n".join(lines) + "\n"
+
+
 if __name__ == "__main__":
     (HERE / "beast.bin").write_bytes(beast())
     (HERE / "aircraft.jsonl").write_text(aircraft_json())
     (HERE / "dump978.jsonl").write_text(dump978())
     (HERE / "rtl_power.csv").write_text(rtl_power())
+    (HERE / "aprs.kiss").write_bytes(aprs())
+    (HERE / "sonde.jsonl").write_text(sonde())
+    (HERE / "rtl433.jsonl").write_text(rtl433())

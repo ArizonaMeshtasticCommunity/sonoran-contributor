@@ -20,9 +20,22 @@ VERSION = 1
 MAX_OBS = 100
 # Sonoran caps `meta` at 1 kB. Ours is a few short strings; this is a guard.
 MAX_META_BYTES = 512
-# An ICAO address as readsb prints it. A leading `~` marks one that is not
-# an ICAO address, such as a TIS-B target. Sonoran stores nothing else.
+# What a thing's identity looks like, per kind. It is the natural
+# identity of the thing heard (design 4.2), and Sonoran checks it again:
+# an id outside these shapes is not stored, so a bad one is dropped here
+# and counted rather than sent.
+#
+# An aircraft's leading `~` marks an address that is not an ICAO one,
+# such as a TIS-B target, the way readsb prints it. An APRS id carries
+# its SSID, because that is how APRS names a station.
 AIRCRAFT_ID = re.compile(r"^~?[0-9a-f]{6}$")
+ID_RULES = {
+    "adsb": AIRCRAFT_ID,
+    "uat": AIRCRAFT_ID,
+    "aprs": re.compile(r"^[a-z0-9]{1,6}(-[a-z0-9]{1,2})?$"),
+    "sonde": re.compile(r"^[a-z0-9][a-z0-9-]{0,31}$"),
+    "ism": re.compile(r"^[a-z0-9][a-z0-9_.-]{0,63}$"),
+}
 STATION_ID = re.compile(r"^[a-z0-9-]{3,32}$")
 AIRCRAFT_KINDS = ("adsb", "uat")
 FEET = 0.3048
@@ -30,7 +43,7 @@ FEET = 0.3048
 
 @dataclass(frozen=True, slots=True)
 class Observation:
-    """One aircraft heard, at one moment. `t` is seconds since the epoch."""
+    """One thing heard, at one moment. `t` is seconds since the epoch."""
 
     kind: str
     id: str
@@ -97,11 +110,13 @@ def observation(
 ) -> Observation | None:
     """Return a checked observation, or None when it is not a usable point.
 
-    The point needs an aircraft address and a position. Every other field
-    is dropped, not the point, when its value is outside the contract.
+    The point needs an identity its kind allows, and a position. Every
+    other field is dropped, not the point, when its value is outside the
+    contract.
     """
     ident = address.strip().lower() if isinstance(address, str) else ""
-    if not AIRCRAFT_ID.match(ident):
+    rule = ID_RULES.get(kind)
+    if rule is None or not rule.match(ident):
         return None
     lat_v = _within(lat, -90, 90, 6)
     lon_v = _within(lon, -180, 180, 6)

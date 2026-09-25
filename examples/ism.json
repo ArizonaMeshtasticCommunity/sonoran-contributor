@@ -1,0 +1,23 @@
+{
+  "v": 1,
+  "station": "tempe-roof",
+  "kind": "ism",
+  "sent": "2026-09-22T18:00:00Z",
+  "obs": [
+    {
+      "id": "acurite-tower-1234",
+      "t": "2026-09-22T17:59:51.0Z",
+      "lat": 33.42,
+      "lon": -111.94,
+      "rssi_db": -11.2,
+      "meta": {
+        "model": "Acurite-Tower",
+        "id": 1234,
+        "channel": "A",
+        "temperature_c": 21.5,
+        "humidity": 44,
+        "battery_ok": 1
+      }
+    }
+  ]
+}

@@ -88,3 +88,87 @@ def identity_reply(icao: str, code: str) -> bytes:
     """A DF5 surveillance reply: parity overlaid with the address."""
     head = ((5 << 27) | id13(code)).to_bytes(4)
     return head + (crc(head) ^ int(icao, 16)).to_bytes(3)
+
+
+# --- APRS: KISS, AX.25 and Mic-E -------------------------------------
+
+
+def kiss_frame(payload: bytes, port: int = 0) -> bytes:
+    """Wrap one AX.25 frame as KISS, escaping the delimiters."""
+    body = bytes([port << 4]) + payload
+    body = body.replace(b"\xdb", b"\xdb\xdd").replace(b"\xc0", b"\xdb\xdc")
+    return b"\xc0" + body + b"\xc0"
+
+
+def _address(call: str, last: bool = False) -> bytes:
+    name, _, ssid = call.upper().partition("-")
+    out = bytes((ord(c) << 1) & 0xFE for c in name.ljust(6)[:6])
+    return out + bytes([0x60 | ((int(ssid or 0) & 0x0F) << 1) | int(last)])
+
+
+def ax25(source: str, destination: str, info: bytes, digis: tuple[str, ...] = ()) -> bytes:
+    """A UI frame with no layer 3 protocol: what APRS travels in."""
+    path = [_address(destination), _address(source)] + [_address(d) for d in digis]
+    path[-1] = path[-1][:6] + bytes([path[-1][6] | 1])
+    return b"".join(path) + bytes([0x03, 0xF0]) + info
+
+
+def _split(value: float) -> tuple[int, int, int]:
+    """Degrees, minutes and hundredths of a minute, carrying as needed.
+
+    Rounding the hundredths on their own turns 47.999 minutes into "100"
+    hundredths, which is a digit too many.
+    """
+    degrees = int(value)
+    hundredths = round((value - degrees) * 6000)
+    if hundredths >= 6000:
+        degrees, hundredths = degrees + 1, 0
+    return degrees, hundredths // 100, hundredths % 100
+
+
+def mic_e(
+    lat: float, lon: float, speed_kn: int, course: int, symbol: str = "/>"
+) -> tuple[str, bytes]:
+    """Encode a Mic-E packet. Returns (destination callsign, info field)."""
+    north, west = lat >= 0, lon < 0
+    lat, lon = abs(lat), abs(lon)
+    lat_deg, lat_min, lat_hun = _split(lat)
+    digits = f"{lat_deg:02d}{lat_min:02d}{lat_hun:02d}"
+    offset = lon >= 100
+    flags = (north, offset, west)
+    call = "".join(
+        chr(ord("P" if flags[n - 3] else "0") + int(d)) if n >= 3 else chr(ord("0") + int(d))
+        for n, d in enumerate(digits)
+    )
+
+    lon_deg, minutes, hundredths = _split(lon)
+    degrees = lon_deg - (100 if offset else 0)
+    info = bytes(
+        [
+            ord("`"),
+            degrees + 28,
+            (minutes + 60 if minutes < 10 else minutes) + 28,
+            hundredths + 28,
+            speed_kn // 10 + 28,
+            (speed_kn % 10) * 10 + course // 100 + 28,
+            course % 100 + 28,
+            ord(symbol[1]),
+            ord(symbol[0]),
+        ]
+    )
+    return call, info
+
+
+def _base91(value: int, width: int) -> bytes:
+    out = bytearray()
+    for _ in range(width):
+        out.append(33 + value % 91)
+        value //= 91
+    return bytes(reversed(out))
+
+
+def aprs_compressed(lat: float, lon: float, symbol: str = "/>") -> bytes:
+    """A compressed position report, base 91, with no course or speed."""
+    y = _base91(round(380926 * (90 - lat)), 4)
+    x = _base91(round(190463 * (180 + lon)), 4)
+    return b"!" + symbol[0].encode() + y + x + symbol[1].encode() + b" sT"

@@ -15,16 +15,23 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
-from rf_agent.messages import AIRCRAFT_KINDS, STATION_ID
+from rf_agent.ism import parse_allow
+from rf_agent.messages import STATION_ID
 
 logger = logging.getLogger(__name__)
 
 ALL_KINDS = ("adsb", "uat", "aprs", "sonde", "ism", "spectrum")
-# Built so far: aircraft (phase 1) and the 900 MHz band (phase 2).
-BUILT_KINDS = (*AIRCRAFT_KINDS, "spectrum")
+# Everything is built: aircraft (phase 1), the 900 MHz band (phase 2),
+# APRS (phase 3), radiosondes and weather sensors (phase 4).
+BUILT_KINDS = ALL_KINDS
+# Kinds a decoder only broadcasts to, so the agent receives datagrams
+# rather than connecting out. See `sources.read_datagrams`.
+UDP_KINDS = ("sonde", "ism")
 BEAST_PORT = 30005
 DUMP978_JSON_PORT = 30979
 RF_SWEEP_PORT = 30950
+KISS_PORT = 8001
+AUTO_RX_PORT = 55672
 MQTTS_PORT = 8883
 
 
@@ -41,8 +48,10 @@ class Source:
 
     `reader` is `beast` (readsb Beast output over TCP), `aircraft_json`
     (readsb or dump1090-fa `aircraft.json`, over HTTP or from a file),
-    `dump978` (dump978-fa JSON lines over TCP), or `rtl_power` (the
-    sweep lines `rf-sweep` serves over TCP).
+    `dump978` (dump978-fa JSON lines over TCP), `rtl_power` (the sweep
+    lines `rf-sweep` serves over TCP), `kiss` (direwolf's KISS stream
+    over TCP), `auto_rx` (radiosonde_auto_rx summaries over UDP) or
+    `rtl_433` (rtl_433 JSON over UDP).
     """
 
     kind: str
@@ -71,6 +80,8 @@ class Config:
     log_level: str = "INFO"
     ignored_kinds: tuple[str, ...] = field(default=())
     mesh_node: str | None = None
+    # `rtl_433` models a member has named. Empty means none pass.
+    ism_allow: frozenset[str] = frozenset()
 
     @property
     def station(self) -> tuple[float, float] | None:
@@ -83,15 +94,40 @@ class Config:
     def kinds(self) -> list[str]:
         """The observation kinds this station serves, for the heartbeat.
 
-        Spectrum is not one: its minutes say for themselves that the
-        station sweeps.
+        Spectrum is not one: the contract's `kinds` lists what a station
+        observes, and its minutes say for themselves that it sweeps.
         """
-        return sorted({s.kind for s in self.sources if s.kind in AIRCRAFT_KINDS})
+        return sorted({s.kind for s in self.sources if s.kind != "spectrum"})
 
 
 def _source(kind: str, url: str) -> Source:
     parts = urlsplit(url)
     scheme = parts.scheme.lower()
+    if kind == "aprs":
+        if scheme not in ("kiss", "tcp") or not parts.hostname:
+            raise ConfigError(
+                f"SOURCES: {kind}={url}: APRS is read from direwolf, kiss://host:port"
+            )
+        try:
+            return Source(kind, "kiss", url, parts.hostname, parts.port or KISS_PORT)
+        except ValueError as exc:
+            raise ConfigError(f"SOURCES: {kind}={url} has a bad port") from exc
+    if kind in UDP_KINDS:
+        reader = "auto_rx" if kind == "sonde" else "rtl_433"
+        default_port = AUTO_RX_PORT if kind == "sonde" else 0
+        if scheme != "udp":
+            raise ConfigError(
+                f"SOURCES: {kind}={url}: this decoder only broadcasts, so it is read "
+                f"with udp://host:port, such as {kind}=udp://0.0.0.0:{default_port or 10433}"
+            )
+        try:
+            port = parts.port or default_port
+        except ValueError as exc:
+            raise ConfigError(f"SOURCES: {kind}={url} has a bad port") from exc
+        if not port:
+            raise ConfigError(f"SOURCES: {kind}={url} names no port to receive on")
+        # The host is which address to receive on, not who to call.
+        return Source(kind, reader, url, parts.hostname or "0.0.0.0", port)
     if kind == "spectrum":
         if scheme != "tcp" or not parts.hostname:
             raise ConfigError(
@@ -233,6 +269,18 @@ def load(env: Mapping[str, str]) -> Config:
         if not MESH_NODE.match(mesh_node):
             errors.append("SITE_MESH_NODE must be a node ID such as !a1b2c3d4")
 
+    ism_allow = parse_allow(env.get("ISM_ALLOW", ""))
+    if any(s.kind == "ism" for s in sources):
+        if not ism_allow:
+            errors.append(
+                "ISM_ALLOW is empty, so no rtl_433 device would pass; name the models to send"
+            )
+        if lat is None or lon is None:
+            errors.append(
+                "a weather sensor sends no position, so STATION_LAT and STATION_LON are "
+                "needed to place what ism hears"
+            )
+
     log_level = env.get("LOG_LEVEL", "").strip().upper() or "INFO"
     if log_level not in ("DEBUG", "INFO", "WARNING", "ERROR"):
         errors.append("LOG_LEVEL must be DEBUG, INFO, WARNING or ERROR")
@@ -253,4 +301,5 @@ def load(env: Mapping[str, str]) -> Config:
         log_level=log_level,
         ignored_kinds=ignored,
         mesh_node=mesh_node,
+        ism_allow=ism_allow,
     )
