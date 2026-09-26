@@ -238,6 +238,11 @@ Three more decoders, each already serving what the agent needs.
   station places are sent as things of their own, named `;` and the
   object's name, with the sender in `meta.owner`. Packets with no
   position are skipped, and so are killed objects.
+  What a radio adds around a comment is taken off it: its own device
+  code, its telemetry, and the DAO extension, whose extra digit of
+  precision is applied to the position rather than thrown away. A
+  weather station that measures no wind sends dots, and those are left
+  out rather than stored as a calm day.
   Each point says whether we heard the station **directly**, and names
   the digipeater or gateway we heard instead when we did not: a packet
   relayed from 150 km away says where that station is, but nothing about

@@ -5,7 +5,14 @@ from collections import Counter
 
 import pytest
 
-from rf_agent.aprs import Direwolf, KissFramer, parse_ax25, parse_mic_e, parse_position
+from rf_agent.aprs import (
+    Direwolf,
+    KissFramer,
+    parse_ax25,
+    parse_mic_e,
+    parse_position,
+    read_tail,
+)
 from rf_agent.messages import batch
 
 from conftest import EPOCH, FIXTURES, assert_valid
@@ -149,9 +156,11 @@ def test_a_weather_station_does_not_move():
         "rain_today_in": 0.0,
         "rain_1h_in": 0.0,
         "pressure_hpa": 1014.0,
+        "wx_type": "e1w",
     }
-    # The readings come in any order: this one writes P before r.
-    assert got["comment"] == "e1w"
+    # The readings come in any order: this one writes P before r, and
+    # `e1w` names the software and station, not something a person typed.
+    assert got["comment"] is None
 
 
 def test_a_comment_is_kept_whole():
@@ -168,13 +177,15 @@ def test_a_station_extension_is_not_a_course():
 
 
 def test_mic_e_carries_its_message_and_a_readable_comment():
-    info = bytes([0x60]) + b"(`:lpi>/" + b'"87}_1 rolling'
+    # A Yaesu names itself after the comment, not before it.
+    info = bytes([0x60]) + b"(`:lpi>/" + b'"87}rolling_$'
     got = parse_mic_e("S3SWUQ", info)
     assert got["lat"] == pytest.approx(33.6252, abs=1e-4)
     assert got["alt_m"] == 396
     assert got["message"] == "In Service"
     # The altitude and the radio's own name are not what a person wrote.
     assert got["comment"] == "rolling"
+    assert got["weather"]["device"] == "Yaesu FT1D"
 
 
 def test_a_relayed_packet_is_not_heard_directly():
@@ -297,3 +308,57 @@ def test_a_blurred_position_says_how_blurred_it_is(raw, blur):
     # The point sits in the middle of what the sender was willing to say.
     assert got["lat"] == pytest.approx(32.8125 if blur is None else got["lat"], abs=1e-4)
     assert 32.4 < got["lat"] < 33.0
+
+
+# Tails from the first live APRS data, with positions changed. Each held
+# something the reader used to leave in the comment.
+
+
+def test_a_radio_names_itself_around_the_comment():
+    # Byonics: `\'` before the position, `|3` after the comment.
+    comment, extras, _ = read_tail(b"'\"7x}|$>%g'r|!w32!|3", mic_e=True)
+    assert comment is None
+    assert extras["device"] == "Byonics TinyTrak3"
+    # Kenwood: `]` before, `=` after, and the text in between is kept whole.
+    comment, extras, _ = read_tail(b"]Greetings from Arizona!=", mic_e=True)
+    assert comment == "Greetings from Arizona!"
+    assert extras["device"] == "Kenwood TM-D710"
+    comment, extras, _ = read_tail(b"]Local WIDE1-1 Digi=", mic_e=True)
+    assert comment == "Local WIDE1-1 Digi"
+
+
+def test_telemetry_is_the_radio_talking_about_itself():
+    comment, extras, _ = read_tail(b"|#+%F'b|!wpb!|3", mic_e=True)
+    assert comment is None
+    # Two base 91 characters a value: `#+` is 2 * 91 + 10.
+    assert extras["telemetry_seq"] == 192
+    assert extras["telemetry_1"] == 401 and extras["telemetry_2"] == 611
+
+
+def test_dao_adds_the_precision_the_sender_sent():
+    plain = parse_position(b"!3248.00N/11318.00W-here")
+    # `!w32!` in base 91 adds a hundredth of a minute to each.
+    with_dao = parse_position(b"!3248.00N/11318.00W-here!w32!")
+    assert with_dao["comment"] == "here"
+    assert with_dao["lat"] > plain["lat"] and with_dao["lon"] < plain["lon"]
+    assert with_dao["lat"] - plain["lat"] == pytest.approx(0.01 / 60 / 91 * 18, abs=1e-8)
+    # `!W32!` spells the extra digit out instead.
+    spelled = parse_position(b"!3248.00N/11318.00W-here!W32!")
+    assert spelled["lat"] - plain["lat"] == pytest.approx(3 / 1000 / 60, abs=1e-9)
+    assert spelled["comment"] == "here"
+
+
+def test_a_station_with_no_sensors_reports_no_readings():
+    got = parse_position(b"!3519.60N/11141.50W_.../...g...t...r000p000P000h..b00000.DsVP")
+    # Wind, gust, temperature and humidity are absent, not zero.
+    assert set(got["weather"]) == {"rain_1h_in", "rain_24h_in", "rain_today_in", "wx_type"}
+    # A barometer reading zero is a station with no barometer.
+    assert "pressure_hpa" not in got["weather"]
+    assert got["weather"]["wx_type"] == ".DsVP"
+    assert got["comment"] is None
+
+
+def test_a_digipeater_keeps_what_it_wrote():
+    # The New-N note after PHG is what the station wrote, so it stays.
+    got = parse_position(b"!3248.00N/11318.00W#PHG5760/W2,AZn/Guadalupe Peak")
+    assert got["comment"] == "/W2,AZn/Guadalupe Peak"
