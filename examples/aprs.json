@@ -20,7 +20,8 @@
         "path": "W7MOT-3*,WIDE2-1"
       },
       "direct": false,
-      "via": "w7mot-3"
+      "via": "w7mot-3",
+      "raw": "KD7ABC-9>S3SWUQ,W7MOT-3*,WIDE2-1:`(`:lpi>/'\"87}rolling_$"
     },
     {
       "id": ";field_day",
@@ -34,7 +35,8 @@
         "owner": "kd7abc",
         "object": "object",
         "comment": "club field day, all welcome"
-      }
+      },
+      "raw": "KD7ABC>APRS:;FIELD DAY*111111z3328.80N/11206.60W-club field day, all welcome"
     }
   ]
 }
