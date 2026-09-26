@@ -106,3 +106,16 @@ def test_line_splitter_keeps_partial_lines():
     assert lines.feed(b"ab") == []
     assert lines.feed(b"c\nde") == [b"abc"]
     assert lines.feed(b"f\r\n") == [b"def"]
+
+
+def test_a_snapshot_has_no_raw_frame_to_send(aircraft_snapshots):
+    # aircraft.json is readsb's decoded state, not a frame off the air,
+    # so there is nothing to show beside the decoded point.
+    _, points = read_snapshots(aircraft_snapshots[:1])
+    assert all(p.raw is None for p in points)
+
+
+def test_a_uat_point_carries_its_json_line(dump978_capture):
+    line = dump978_capture.splitlines()[0]
+    (point,) = Dump978("uat").feed(line + b"\n", 0.0)
+    assert point.raw == line.decode()

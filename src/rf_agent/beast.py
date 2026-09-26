@@ -229,7 +229,7 @@ class Tracker:
             ac.velocity = (es.gs_kn, es.track_deg, now)
         if es.cpr is None:
             return None
-        return self._position(es.address, ac, es, frame.signal, now)
+        return self._position(es.address, ac, es, frame.signal, now, msg)
 
     def _identity_reply(self, msg: bytes, now: float) -> None:
         """Take the squawk from a DF5 or DF21 reply of an aircraft already known.
@@ -244,7 +244,13 @@ class Tracker:
         ac.squawk = (squawk(int.from_bytes(msg[0:4]) & 0x1FFF), now)
 
     def _position(
-        self, address: str, ac: _Aircraft, es: Message, signal: int, now: float
+        self,
+        address: str,
+        ac: _Aircraft,
+        es: Message,
+        signal: int,
+        now: float,
+        frame: bytes = b"",
     ) -> Observation | None:
         if es.surface:
             ac.on_ground = True
@@ -280,7 +286,7 @@ class Tracker:
                 self.bad += 1
                 return None
         ac.position = (lat, lon, now)
-        return self._observation(address, ac, lat, lon, signal, now)
+        return self._observation(address, ac, lat, lon, signal, now, frame)
 
     def _airborne(self, ac: _Aircraft, es: Message, now: float) -> tuple[float, float] | None:
         if ac.position is not None and now - ac.position[2] <= REFERENCE_S:
@@ -292,7 +298,14 @@ class Tracker:
         return cpr_global(ac.even[0], ac.odd[0], newest_odd=es.odd)
 
     def _observation(
-        self, address: str, ac: _Aircraft, lat: float, lon: float, signal: int, now: float
+        self,
+        address: str,
+        ac: _Aircraft,
+        lat: float,
+        lon: float,
+        signal: int,
+        now: float,
+        frame: bytes = b"",
     ) -> Observation | None:
         def fresh(item):
             return item is not None and now - item[-1] <= STALE_S
@@ -320,5 +333,8 @@ class Tracker:
             gs_kn=gs,
             track_deg=track,
             rssi_db=rssi_db(signal),
+            # The frame this position came out of, as every Mode S tool
+            # prints it.
+            raw=frame.hex().upper() or None,
             meta=meta,
         )

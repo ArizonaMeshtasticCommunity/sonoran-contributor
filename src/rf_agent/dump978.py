@@ -123,6 +123,7 @@ class Dump978:
             gs_kn=msg.get("ground_speed"),
             track_deg=msg.get("true_track"),
             rssi_db=meta.get("rssi"),
+            raw=line.decode("utf-8", "replace"),
             meta={**names, "ground": True if on_ground else None},
         )
         if point is None:

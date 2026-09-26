@@ -107,3 +107,15 @@ def test_syslog_wrapping_is_unwrapped():
     assert point.id == "acurite-tower-9"
     assert (point.lat, point.lon) == ROUNDED
     assert SITE != ROUNDED  # the true position never leaves the site
+
+
+def test_raw_is_the_line_the_decoder_sent():
+    line = datagrams("sonde.jsonl")[0]
+    (point,) = AutoRx().feed(line, EPOCH)
+    assert point.raw == line.decode()
+    reader = Rtl433("ism", ALLOW, ROUNDED)
+    body = json.dumps({"model": "Acurite-Tower", "id": 9, "temperature_C": 3.5})
+    wrapped = f"<165>1 2026-09-22T18:00:00Z host rtl433 - - - {body}".encode()
+    (point,) = reader.feed(wrapped, EPOCH)
+    # The device's own line, without the syslog wrapper around it.
+    assert point.raw == body

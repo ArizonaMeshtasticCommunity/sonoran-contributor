@@ -24,6 +24,8 @@ MAX_OBS = 100
 # same limits: a value that cannot be sent whole is left out, never cut.
 MAX_META_BYTES = 4096
 MAX_META_VALUE_CHARS = 256
+# The contract's cap on the raw source of one observation.
+MAX_RAW_CHARS = 1024
 # What a thing's identity looks like, per kind. It is the natural
 # identity of the thing heard (design 4.2), and Sonoran checks it again:
 # an id outside these shapes is not stored, so a bad one is dropped here
@@ -73,6 +75,10 @@ class Observation:
     # station blank digits to say "somewhere around here". None means it
     # said exactly where it is.
     precision_m: float | None = None
+    # What the decoder gave us for this point, as it came: a frame, a
+    # line, an object. It is what a reader checks a decoded point
+    # against, so it is never shortened.
+    raw: str | None = None
     meta: dict[str, Any] = field(default_factory=dict)
 
     def to_json(self) -> dict[str, Any]:
@@ -92,6 +98,7 @@ class Observation:
             "direct",
             "via",
             "precision_m",
+            "raw",
         ):
             value = getattr(self, name)
             if value is not None:
@@ -136,6 +143,7 @@ def observation(
     direct: bool | None = None,
     via: str | None = None,
     precision_m: Any = None,
+    raw: str | None = None,
     meta: dict[str, Any] | None = None,
 ) -> Observation | None:
     """Return a checked observation, or None when it is not a usable point.
@@ -175,6 +183,8 @@ def observation(
         direct=direct if isinstance(direct, bool) else None,
         via=_station(via),
         precision_m=_within(precision_m, 0, 200_000, 0),
+        # Too long to send whole is sent not at all, as with a comment.
+        raw=raw if isinstance(raw, str) and 0 < len(raw) <= MAX_RAW_CHARS else None,
         meta=clean_meta,
     )
 
