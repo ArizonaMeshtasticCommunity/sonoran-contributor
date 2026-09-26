@@ -136,6 +136,8 @@ class Rtl433:
             self.position[0],
             self.position[1],
             rssi_db=message.get("rssi"),
+            # The device's own line, with any syslog wrapper taken off.
+            raw=text,
             meta=meta,
         )
         if point is None:

@@ -79,6 +79,7 @@ class AutoRx:
             alt_ref="geom",
             gs_kn=speed / KMH_PER_KNOT if speed is not None else None,
             track_deg=message.get("heading"),
+            raw=data.decode("utf-8", "replace").strip(),
             # `snr` is a signal to noise ratio, not a level. It is kept in
             # meta rather than passed off as rssi_db.
             meta={

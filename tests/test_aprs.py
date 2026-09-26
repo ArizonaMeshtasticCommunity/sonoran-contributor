@@ -383,3 +383,23 @@ def test_the_rest_of_the_weather_readings():
     assert bright["weather"]["rain_counter"] == 37
     # What a person typed is still a comment, not a station code.
     assert bright["comment"] == "Cumulus"
+
+
+def test_every_point_carries_the_frame_it_came_from():
+    reader = Direwolf()
+    frame = ax25("KD7ABC", "APRS", b"!3248.00N/11318.00W-home", digis=("W7MOT-3", "WIDE2-1"))
+    relayed = bytearray(frame)
+    relayed[20] |= 0x80
+    (point,) = reader.feed(kiss_frame(bytes(relayed)), EPOCH)
+    assert point.raw == "KD7ABC>APRS,W7MOT-3*,WIDE2-1:!3248.00N/11318.00W-home"
+    # A third-party packet carries the outer frame: that is what we heard.
+    inner = b"CW1234>APRS,TCPIP*,qAC,T2TEST:!3248.00N/11318.00W_t072"
+    (point,) = Direwolf().feed(kiss_frame(ax25("K7XYG-10", "APRS", b"}" + inner)), EPOCH)
+    assert point.id == "cw1234"
+    assert point.raw == "K7XYG-10>APRS:}" + inner.decode()
+    # A byte that is not printable is written out, never sent as itself.
+    # 0x1c is one of Mic-E's own data type characters.
+    mic = ax25("KD7ABC-9", "S3SWUQ", bytes([0x1C]) + b"(`:lpi>/")
+    (point,) = Direwolf().feed(kiss_frame(mic), EPOCH)
+    assert point.raw.endswith("<0x1c>(`:lpi>/")
+    assert "\x1c" not in point.raw

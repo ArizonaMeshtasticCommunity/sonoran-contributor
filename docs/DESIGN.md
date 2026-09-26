@@ -266,6 +266,11 @@ JSON, one object per message, a batch of up to 100 observations.
   itself: the last digipeater to repeat it, or the gateway of a packet
   that came from the internet. An alias such as `WIDE2-1` names nobody,
   so `via` is empty there.
+- `raw` is what the decoder gave us for that point, as it came: an APRS
+  frame in TNC2 form, a Mode S frame as hex, a decoder's JSON line. It
+  is what a reader checks a decoded point against. A snapshot such as
+  `aircraft.json` has none, and none is invented. Too long to send whole
+  is sent not at all.
 - `precision_m` on an observation is how far the **sender** blurred its
   own position, which APRS lets a station do by blanking digits. The
   heartbeat's `precision_m` is the opposite: how much **we** rounded our

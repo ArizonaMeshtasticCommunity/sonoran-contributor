@@ -143,3 +143,12 @@ def test_every_point_fits_the_contract(beast_capture):
     points = list(replay_beast(Tracker("adsb", SITE), beast_capture))
     for start in range(0, len(points), 100):
         assert_valid(batch("test-site", "adsb", points[start : start + 100], EPOCH))
+
+
+def test_a_position_carries_the_frame_it_came_from(beast_capture):
+    points = list(replay_beast(Tracker("adsb", SITE), beast_capture))
+    point = points[0]
+    # Uppercase hex, no framing, as every Mode S tool prints a frame.
+    assert point.raw is not None
+    assert len(point.raw) == 28 and point.raw == point.raw.upper()
+    assert bytes.fromhex(point.raw)[0] >> 3 in (17, 18)

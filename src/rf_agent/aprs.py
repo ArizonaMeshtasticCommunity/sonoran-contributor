@@ -749,6 +749,9 @@ class Direwolf:
             return None
 
         source, info = packet.source, packet.info
+        # The frame as heard, before a third party or an object rewrites
+        # what `source` and `info` mean below.
+        raw = tnc2(packet)
         direct, via = packet.direct, via_of(packet.path)
         third_party = False
         if info[:1].decode("latin-1") == THIRD_PARTY:
@@ -800,6 +803,7 @@ class Direwolf:
             direct=direct,
             via=None if direct else via,
             precision_m=found.get("precision_m"),
+            raw=raw,
             meta={
                 "symbol": found.get("symbol"),
                 # Mic-E's destination is encoded latitude, which says
@@ -817,6 +821,21 @@ class Direwolf:
         if point is None:
             self.bad += 1
         return point
+
+
+def tnc2(packet: Packet) -> str:
+    """The frame as a TNC2 monitor line, the form every APRS tool prints.
+
+    `SRC>DEST,PATH:info`, with `*` on each hop that has repeated it. A
+    byte that is not printable is written `<0xNN>`, so the line stays
+    readable and carries no control characters.
+    """
+    path = "".join("," + hop for hop in packet.path)
+    return f"{packet.source}>{packet.destination}{path}:{printable(packet.info)}"
+
+
+def printable(info: bytes) -> str:
+    return "".join(chr(byte) if 0x20 <= byte < 0x7F else f"<0x{byte:02x}>" for byte in info)
 
 
 def _comment(rest: bytes) -> str | None:
