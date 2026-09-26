@@ -362,3 +362,24 @@ def test_a_digipeater_keeps_what_it_wrote():
     # The New-N note after PHG is what the station wrote, so it stays.
     got = parse_position(b"!3248.00N/11318.00W#PHG5760/W2,AZn/Guadalupe Peak")
     assert got["comment"] == "/W2,AZn/Guadalupe Peak"
+
+
+def test_the_rest_of_the_weather_readings():
+    # wx7fgz-5 left "L000.DsVP" in its comment: luminosity, then the code
+    # naming the software and station.
+    got = parse_position(b"!3519.60N/11141.50W_.../...g...t...b10281L000.DsVP")
+    assert got["weather"] == {
+        "pressure_hpa": 1028.1,
+        "luminosity_wm2": 0,
+        "wx_type": ".DsVP",
+    }
+    assert got["comment"] is None
+    # `l` is luminosity of 1000 and over, written as a letter rather than
+    # a fourth digit. Snow is tenths of an inch, and `#` counts the rain
+    # gauge's own tips.
+    bright = parse_position(b"!3519.60N/11141.50W_180/010g015t032h55b10281l123s012#037Cumulus")
+    assert bright["weather"]["luminosity_wm2"] == 1123
+    assert bright["weather"]["snow_24h_in"] == 1.2
+    assert bright["weather"]["rain_counter"] == 37
+    # What a person typed is still a comment, not a station code.
+    assert bright["comment"] == "Cumulus"

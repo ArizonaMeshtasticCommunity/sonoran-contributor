@@ -73,14 +73,22 @@ ALTITUDE = re.compile(rb"/A=(-?\d{6})")
 # A station's own radio details, not a course and speed.
 STATION_EXTENSION = re.compile(rb"^(PHG|RNG|DFS)[0-9A-Za-z]{4}")
 # A weather station's readings, in the order APRS writes them.
+# Each reading: how it is written, what it is called, what to multiply
+# it by, and what to add. `l` is luminosity of 1000 and over, which APRS
+# writes as a second letter rather than a fourth digit.
 WEATHER = (
-    (re.compile(rb"g([\d. ]{3})"), "gust_kn", 0.868976),
-    (re.compile(rb"t(-?[\d. ]{2,3})"), "temperature_f", 1.0),
-    (re.compile(rb"r([\d. ]{3})"), "rain_1h_in", 0.01),
-    (re.compile(rb"p([\d. ]{3})"), "rain_24h_in", 0.01),
-    (re.compile(rb"P([\d. ]{3})"), "rain_today_in", 0.01),
-    (re.compile(rb"h([\d. ]{2})"), "humidity", 1.0),
-    (re.compile(rb"b([\d. ]{5})"), "pressure_hpa", 0.1),
+    (re.compile(rb"g([\d. ]{3})"), "gust_kn", 0.868976, 0),
+    (re.compile(rb"t(-?[\d. ]{2,3})"), "temperature_f", 1.0, 0),
+    (re.compile(rb"r([\d. ]{3})"), "rain_1h_in", 0.01, 0),
+    (re.compile(rb"p([\d. ]{3})"), "rain_24h_in", 0.01, 0),
+    (re.compile(rb"P([\d. ]{3})"), "rain_today_in", 0.01, 0),
+    (re.compile(rb"h([\d. ]{2})"), "humidity", 1.0, 0),
+    (re.compile(rb"b([\d. ]{5})"), "pressure_hpa", 0.1, 0),
+    (re.compile(rb"L([\d. ]{3})"), "luminosity_wm2", 1.0, 0),
+    (re.compile(rb"l([\d. ]{3})"), "luminosity_wm2", 1.0, 1000),
+    # Snowfall is written in tenths of an inch, as aprslib reads it.
+    (re.compile(rb"s([\d. ]{3})"), "snow_24h_in", 0.1, 0),
+    (re.compile(rb"#([\d. ]{3})"), "rain_counter", 1.0, 0),
 )
 # The Mic-E message types, from the three message bits.
 MIC_E_MESSAGES = (
@@ -274,7 +282,7 @@ def parse_weather(rest: bytes) -> tuple[dict[str, Any], bytes]:
     taking = True
     while taking:
         taking = False
-        for pattern, name, scale in WEATHER:
+        for pattern, name, scale, offset in WEATHER:
             found = pattern.match(rest)
             if found is None:
                 continue
@@ -282,7 +290,7 @@ def parse_weather(rest: bytes) -> tuple[dict[str, Any], bytes]:
             taking = True
             digits = found.group(1).strip(b". ")
             if digits.lstrip(b"-").isdigit():
-                value = int(digits)
+                value = int(digits) + offset
                 # A barometer reading zero is a station with no barometer.
                 if not (name == "pressure_hpa" and value == 0):
                     weather[name] = round(value * scale, 2) if scale != 1.0 else value
