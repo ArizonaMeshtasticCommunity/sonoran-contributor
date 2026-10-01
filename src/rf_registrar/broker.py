@@ -15,6 +15,13 @@ import aiohttp
 
 AUTHN = quote("password_based:built_in_database", safe="")
 RULES = "authorization/sources/built_in_database/rules/users"
+ALL_RULES = "authorization/sources/built_in_database/rules/all"
+
+# For every client the registrar's own rules do not name, such as a
+# login made by hand whose file rule allows `rf/v1/<station>/#`. Without
+# it, that login could publish its own registry entry. The registrar
+# publishes through the API, which no client rule applies to.
+REGISTRY_GUARD = {"permission": "deny", "action": "publish", "topic": "rf/v1/+/registry"}
 
 
 class BrokerError(RuntimeError):
@@ -29,6 +36,7 @@ class Broker(Protocol):
     async def delete_rules(self, username: str) -> None: ...
     async def kick(self, username: str) -> int: ...
     async def publish_retained(self, topic: str, payload: bytes) -> None: ...
+    async def guard_registry(self) -> bool: ...
 
 
 def rules_for(station: str, source: str) -> list[dict[str, str]]:
@@ -109,6 +117,24 @@ class Emqx:
         for clientid in clients:
             await self._call("DELETE", f"clients/{quote(clientid, safe='')}", ok=(204, 404))
         return len(clients)
+
+    async def guard_registry(self) -> bool:
+        """Make sure the all-clients rule that guards the registry is there.
+
+        Returns True when it had to be added. The other all-client rules
+        are kept as they are.
+        """
+        found = await self._call("GET", ALL_RULES)
+        rules = list((found or {}).get("rules", []))
+        if any(
+            r.get("topic") == REGISTRY_GUARD["topic"]
+            and r.get("permission") == "deny"
+            and r.get("action") in ("publish", "all")
+            for r in rules
+        ):
+            return False
+        await self._call("POST", ALL_RULES, {"rules": [REGISTRY_GUARD, *rules]})
+        return True
 
     async def publish_retained(self, topic: str, payload: bytes) -> None:
         # Published by the API, which no client authorization rule applies to.

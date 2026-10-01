@@ -177,8 +177,9 @@ async def serve(config: Config) -> None:
     async with aiohttp.ClientSession() as session:
         broker = Emqx(config.emqx_url, config.emqx_key, config.emqx_secret, session)
         registrar = Registrar(config, Store(config.db_path), broker)
-        # Put every registry entry right, in case a publish was lost.
-        await registrar.republish_all()
+        # Guard the registry topic, and put every entry right, in case a
+        # publish was lost.
+        await registrar.start()
         runner = web.AppRunner(make_app(config, registrar), access_log=None)
         await runner.setup()
         await web.TCPSite(runner, config.host, config.port).start()

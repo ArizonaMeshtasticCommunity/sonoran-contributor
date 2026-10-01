@@ -30,6 +30,9 @@ from rf_registrar.store import Location, Source, Store
 logger = logging.getLogger(__name__)
 
 MAX_NAME = 64
+# Sonoran refuses a registry entry with more sources than this, so no
+# location may have more, an operator's included.
+HARD_MAX_SOURCES = 32
 PASSWORD_BYTES = 24
 
 
@@ -184,6 +187,18 @@ class Registrar:
         except BrokerError:
             logger.exception("could not publish the registry entry of %s", location_id)
 
+    async def start(self) -> None:
+        """At start: guard the registry topic, then publish every entry again."""
+        try:
+            if await self.broker.guard_registry():
+                logger.warning("added the broker rule that guards rf/v1/+/registry")
+        except BrokerError:
+            logger.exception(
+                "could not check the broker rule that guards rf/v1/+/registry; "
+                "a login made by hand may be able to write its registry entry"
+            )
+        await self.republish_all()
+
     async def republish_all(self) -> None:
         for location in self.store.locations():
             await self.publish(location.id)
@@ -221,6 +236,9 @@ class Registrar:
         if not isinstance(new_owner_id, str) or not new_owner_id.isdigit():
             raise Invalid("the new owner is a Discord user id")
         name = clean_name(new_owner_name, "new owner name")
+        owned = len(self.store.locations(new_owner_id))
+        if not actor.operator and owned >= self.config.max_locations:
+            raise Limited(f"the new owner has {self.config.max_locations} locations already")
         self.store.update_location(location.id, owner_id=new_owner_id, owner_name=name)
         self.store.log(actor.id, "transfer", location.id, detail=new_owner_id, at=self.clock())
         await self.publish(location.id)
@@ -251,8 +269,10 @@ class Registrar:
         name = _label(label)
         if self.store.source(location.id, name) is not None:
             raise Conflict(f"{location.id} has a source {name} already; rotate it instead")
-        if not actor.operator and len(self.store.sources(location.id)) >= self.config.max_sources:
-            raise Limited(f"a location has at most {self.config.max_sources} sources")
+        count = len(self.store.sources(location.id))
+        if count >= HARD_MAX_SOURCES or (not actor.operator and count >= self.config.max_sources):
+            limit = HARD_MAX_SOURCES if actor.operator else self.config.max_sources
+            raise Limited(f"a location has at most {limit} sources")
         self._check_rate(actor)
         username = username_for(location.id, name)
         password = self.password()

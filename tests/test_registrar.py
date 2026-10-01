@@ -35,6 +35,7 @@ class FakeBroker:
         self.retained: dict[str, bytes] = {}
         self.kicked: list[str] = []
         self.fail: set[str] = set()
+        self.guarded = False
 
     def _maybe_fail(self, name):
         if name in self.fail:
@@ -66,6 +67,12 @@ class FakeBroker:
     async def publish_retained(self, topic, payload):
         self._maybe_fail("publish_retained")
         self.retained[topic] = payload
+
+    async def guard_registry(self):
+        self._maybe_fail("guard_registry")
+        added = not self.guarded
+        self.guarded = True
+        return added
 
 
 def config(**changes) -> Config:
@@ -381,3 +388,35 @@ async def test_the_http_api_needs_the_key_and_maps_errors(reg):
         (row,) = await mine.json()
         assert [s["source"] for s in row["sources"]] == ["adsb-pi"]
         assert "password" not in json.dumps(row)
+
+
+async def test_start_guards_the_registry_and_survives_a_broker_that_refuses(reg, broker):
+    await reg.create("tempe-roof", "Tempe roof", OWNER)
+    broker.retained.clear()
+    broker.fail.add("guard_registry")
+    await reg.start()
+    assert not broker.guarded
+    assert registry(broker, "tempe-roof")["display_name"] == "Tempe roof"
+    broker.fail.clear()
+    await reg.start()
+    assert broker.guarded
+
+
+async def test_no_location_passes_the_hard_source_cap(broker, clock):
+    """Sonoran refuses a registry entry with more than 32 sources."""
+    big = Registrar(config(max_sources=100), Store(":memory:"), broker, clock=clock)
+    await big.create("big-site", "Big", OPERATOR)
+    for i in range(32):
+        await big.mint("big-site", f"pi{i}", OPERATOR)
+    with pytest.raises(Limited, match="32"):
+        await big.mint("big-site", "pi32", OPERATOR)
+    assert_valid(registry(broker, "big-site"))
+
+
+async def test_a_transfer_respects_the_new_owners_limit(reg):
+    await reg.create("site-one", "One", OTHER)
+    await reg.create("site-two", "Two", OTHER)
+    await reg.create("tempe-roof", "Tempe roof", OWNER)
+    with pytest.raises(Limited, match="new owner"):
+        await reg.transfer("tempe-roof", "222", "Will", OWNER)
+    await reg.transfer("tempe-roof", "222", "Will", OPERATOR)

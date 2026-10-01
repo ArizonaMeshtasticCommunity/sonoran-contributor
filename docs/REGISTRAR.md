@@ -60,12 +60,22 @@ on the RF tab. It never holds a Discord id.
 
 EMQX 5. The registrar needs:
 
-- An API key and secret.
+- An API key and secret, with the administrator role. EMQX 5.8 needs a
+  `desc` to make one through the API.
 - The built-in user database as an authenticator.
 - The built-in database as an **authorization source, before any file
   source**. A login's own rules then decide before a file rule does.
   A file rule such as `{deny, all, all, ["rf/v1/#"]}` still stops every
   other login.
+
+At start the registrar adds one all-clients rule to that source, if it
+is not there: deny publish to `rf/v1/+/registry`. A login made by hand,
+whose file rule allows `rf/v1/<station>/#`, could otherwise publish its
+own registry entry. The registrar itself publishes through the API,
+which no client rule applies to.
+
+A location has at most 32 sources, an operator's included, because
+Sonoran refuses a registry entry with more.
 
 ## The API
 
