@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
 from rf_agent.ism import parse_allow
-from rf_agent.messages import STATION_ID
+from rf_agent.messages import SOURCE_ID, STATION_ID
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +80,9 @@ class Config:
     log_level: str = "INFO"
     ignored_kinds: tuple[str, ...] = field(default=())
     mesh_node: str | None = None
+    # This Pi's name within the station, or None for a station with one
+    # agent and a login made before Sonoran #305.
+    source_id: str | None = None
     # `rtl_433` models a member has named. Empty means none pass.
     ism_allow: frozenset[str] = frozenset()
 
@@ -222,6 +225,10 @@ def load(env: Mapping[str, str]) -> Config:
         except ValueError:
             errors.append("BROKER_URL has a bad port")
 
+    source_id = env.get("SOURCE_ID", "").strip().lower() or None
+    if source_id is not None and not SOURCE_ID.match(source_id):
+        errors.append("SOURCE_ID must match [a-z0-9][a-z0-9-]{0,15}")
+
     broker_user = env.get("BROKER_USER", "").strip() or station_id
     broker_pass = env.get("BROKER_PASS", "")
 
@@ -301,5 +308,6 @@ def load(env: Mapping[str, str]) -> Config:
         log_level=log_level,
         ignored_kinds=ignored,
         mesh_node=mesh_node,
+        source_id=source_id,
         ism_allow=ism_allow,
     )

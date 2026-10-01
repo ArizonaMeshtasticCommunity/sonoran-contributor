@@ -10,7 +10,7 @@ import pytest
 from rf_agent.config import load
 from rf_agent.geo import round_position
 from rf_agent.messages import Counts, observation
-from rf_agent.publisher import Outbox, Publisher, run
+from rf_agent.publisher import Outbox, Publisher, client_id, run
 
 from conftest import assert_valid
 
@@ -164,3 +164,51 @@ async def test_heartbeat_names_the_mesh_node():
     message = client.published[0][1]
     assert_valid(message)
     assert message["mesh_node"] == "!a1b2c3d4"
+
+
+SOURCED = load({**CONFIG_ENV, "SOURCE_ID": "adsb-pi", "BROKER_USER": "rf-test-site-adsb-pi"})
+
+
+async def test_a_source_has_its_own_heartbeat_topic_and_names_itself_everywhere():
+    """Sonoran #305: two Pis of one station must not share a retained topic."""
+    publisher = Publisher(SOURCED, Outbox(), Counts(), clock=lambda: T)
+    for p in points(3):
+        publisher.outbox.add(p)
+    minute = {
+        "v": 1, "station": "test-site", "kind": "spectrum", "t": "2026-09-22T18:00:00Z",
+        "f_start_hz": 902_000_000, "bin_hz": 50_000, "sweeps": 12, "gain_db": 32.8,
+        "p50": [-500], "p95": [-480], "peak": [-470], "busy": [0],
+    }  # fmt: skip
+    publisher.outbox.post("spectrum", minute)
+    client = FakeClient()
+    await publisher.flush(client)
+    await publisher.heartbeat(client)
+    topics = [topic for topic, _, _, _ in client.published]
+    assert topics == [
+        "rf/v1/test-site/spectrum",
+        "rf/v1/test-site/adsb",
+        "rf/v1/test-site/status/adsb-pi",
+    ]
+    for _, message, _, _ in client.published:
+        assert_valid(message)
+        assert message["station"] == "test-site"
+        assert message["source"] == "adsb-pi"
+
+
+async def test_without_a_source_nothing_changes():
+    publisher = make()
+    client = FakeClient()
+    await publisher.heartbeat(client)
+    ((topic, message, _, _),) = client.published
+    assert topic == "rf/v1/test-site/status"
+    assert "source" not in message
+
+
+def test_the_client_id_is_one_per_login_and_source():
+    """Two connections with one client id disconnect each other in a loop."""
+    assert client_id(CONFIG) == "rf-agent-test-site"
+    # A minted login already names its source; it is not repeated.
+    assert client_id(SOURCED) == "rf-agent-rf-test-site-adsb-pi"
+    shared = load({**CONFIG_ENV, "SOURCE_ID": "sweeper"})
+    assert client_id(shared) == "rf-agent-test-site-sweeper"
+    assert len({client_id(CONFIG), client_id(SOURCED), client_id(shared)}) == 3

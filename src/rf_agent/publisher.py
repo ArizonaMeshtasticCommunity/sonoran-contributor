@@ -2,9 +2,14 @@
 
 Topics (design 4.1), for this station only:
 
-    rf/v1/<station>/<kind>     batches of at most 100 points, QoS 0
-    rf/v1/<station>/spectrum   a minute of the 900 MHz band, QoS 0
-    rf/v1/<station>/status     the heartbeat, every 60 s, retained, QoS 1
+    rf/v1/<station>/<kind>             batches of at most 100 points, QoS 0
+    rf/v1/<station>/spectrum           a minute of the 900 MHz band, QoS 0
+    rf/v1/<station>/status/<source>    the heartbeat, every 60 s, retained, QoS 1
+
+With no `SOURCE_ID` the heartbeat goes to `rf/v1/<station>/status`, as
+before Sonoran #305. A station with two Pis needs a source on each:
+both heartbeats are retained, and on one topic each would replace the
+other.
 
 Points wait in the `Outbox` between flushes, and while the broker is
 away. The outbox is bounded: when it is full the oldest points go
@@ -50,6 +55,23 @@ class Client(Protocol):
 
 def topic(station: str, name: str) -> str:
     return f"rf/v1/{station}/{name}"
+
+
+def status_topic(station: str, source: str | None) -> str:
+    return topic(station, "status" if source is None else f"status/{source}")
+
+
+def client_id(config: Config) -> str:
+    """The MQTT client id. One per login and source.
+
+    Two connections with one client id disconnect each other, over and
+    over. Before Sonoran #305 it was the station id alone, so two Pis of
+    one station knocked each other off the broker.
+    """
+    name = f"rf-agent-{config.broker_user}"
+    if config.source_id and not config.broker_user.endswith(f"-{config.source_id}"):
+        name += f"-{config.source_id}"
+    return name
 
 
 class Outbox:
@@ -127,13 +149,16 @@ class Publisher:
         """
         sent = 0
         station = self.config.station_id
+        source = self.config.source_id
         while self.outbox.posted:
             kind, message = self.outbox.posted[0]
+            if source is not None:
+                message = {**message, "source": source}
             await client.publish(topic(station, kind), encode(message), qos=0, retain=False)
             self.outbox.posted.popleft()
         for kind in self.outbox.kinds():
             while chunk := self.outbox.take(kind):
-                payload = encode(batch(station, kind, chunk, self.clock()))
+                payload = encode(batch(station, kind, chunk, self.clock(), source))
                 try:
                     await client.publish(topic(station, kind), payload, qos=0, retain=False)
                 except BaseException:
@@ -159,6 +184,7 @@ class Publisher:
             position=self.position,
             precision_m=self.config.precision_m,
             mesh_node=self.config.mesh_node,
+            source=self.config.source_id,
         )
 
     async def heartbeat(self, client: Client) -> Counts:
@@ -167,7 +193,10 @@ class Publisher:
         payload = encode(self.heartbeat_message(counts))
         try:
             await client.publish(
-                topic(self.config.station_id, "status"), payload, qos=1, retain=True
+                status_topic(self.config.station_id, self.config.source_id),
+                payload,
+                qos=1,
+                retain=True,
             )
         except BaseException:
             self.counts.give_back(counts)
@@ -205,7 +234,7 @@ def make_client(config: Config) -> aiomqtt.Client:
         port=config.broker_port,
         username=config.broker_user or None,
         password=config.broker_pass or None,
-        identifier=f"rf-agent-{config.station_id}",
+        identifier=client_id(config),
         protocol=aiomqtt.ProtocolVersion.V311,
         clean_session=True,
         keepalive=60,

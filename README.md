@@ -76,8 +76,9 @@ services:
     restart: unless-stopped
     environment:
       STATION_ID: tempe-roof
+      SOURCE_ID: adsb-pi
       BROKER_URL: mqtts://broker.example:8883
-      BROKER_USER: tempe-roof
+      BROKER_USER: rf-tempe-roof-adsb-pi
       BROKER_PASS: ${RF_AGENT_PASS}
       SOURCES: adsb=beast://readsb:30005,uat=tcp://dump978:30979
       STATION_LAT: "33.42"
@@ -85,8 +86,19 @@ services:
       STATION_PRECISION_M: "1000"
 ```
 
-Ask an operator for a station login first. Each login may publish to its
-own topic and nothing else.
+Get a login from the community Discord bot first:
+
+1. `/rf location create` claims your station id. You become its owner.
+2. `/rf token mint` makes one login for one Pi. The bot sends you
+   `STATION_ID`, `SOURCE_ID`, `BROKER_USER` and `BROKER_PASS` in a direct
+   message, once. Keep the password: it is never shown again.
+
+A station with two Pis, for example one for ADS-B and one for the 900 MHz
+sweep, is one station on the map. Mint one login for each Pi, each with
+its own `SOURCE_ID`. You can rotate or revoke one Pi's login without
+touching the other.
+
+Each login may publish to its own station's topics and nothing else.
 
 The agent logs a heartbeat line every minute: how many positions it
 heard, sent and thinned. A decoder or broker that goes away is retried,
@@ -103,8 +115,9 @@ Every setting is an environment variable.
 
 | Variable | Meaning | Default |
 |----------|---------|:-------:|
-| `STATION_ID` | Short name, `[a-z0-9-]{3,32}`. Also the broker login. | — |
-| `BROKER_URL`, `BROKER_USER`, `BROKER_PASS` | The community broker, and this station's own login. | — |
+| `STATION_ID` | Short name, `[a-z0-9-]{3,32}`. The place on the map. | — |
+| `SOURCE_ID` | This Pi's name within the station, `[a-z0-9][a-z0-9-]{0,15}`. Required for a minted login; leave it out only for a login made by hand. | — |
+| `BROKER_URL`, `BROKER_USER`, `BROKER_PASS` | The community broker, and this Pi's own login. | — |
 | `SOURCES` | `kind=url` pairs, comma separated. Kinds: `adsb`, `uat`, `spectrum`, `aprs`, `sonde`, `ism`. See [sources](#sources). | — |
 | `STATION_LAT`, `STATION_LON` | Where the antenna is. | — |
 | `STATION_PRECISION_M` | How much to round the station position before it is sent. | `1000` |
@@ -118,6 +131,12 @@ Every setting is an environment variable.
 `BROKER_URL` must be `mqtts://`: the agent talks to a broker over TLS
 only, checked against the system's certificate authorities. The port
 defaults to 8883. `BROKER_USER` defaults to `STATION_ID`.
+
+With `SOURCE_ID`, every message names the source, and the heartbeat goes
+to `rf/v1/<station>/status/<source>`. A minted login may publish its
+heartbeat there and nowhere else, so an agent with a minted login and no
+`SOURCE_ID` is refused its heartbeat. Without `SOURCE_ID` the heartbeat
+goes to `rf/v1/<station>/status`, as for a login made by hand.
 
 `STATION_LAT` and `STATION_LON` are optional. Without them the heartbeat
 carries no position, and surface positions of aircraft on the ground
