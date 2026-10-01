@@ -27,6 +27,19 @@
           "title": "Sent",
           "type": "string"
         },
+        "source": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z0-9][a-z0-9-]{0,15}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source"
+        },
         "station": {
           "pattern": "^[a-z0-9-]{3,32}$",
           "title": "Station",
@@ -246,6 +259,63 @@
       "title": "Observation",
       "type": "object"
     },
+    "Registry": {
+      "description": "A location's entry in the registry, on `rf/v1/<station>/registry`.\n\nThe registrar publishes it, retained, when a location or its tokens\nchange (#305). The broker lets nobody else publish to this topic, so\na station cannot claim a name or an owner. `sources` are the\nsources that hold a login now. An empty retained message removes\nthe entry.",
+      "properties": {
+        "display_name": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Display Name",
+          "type": "string"
+        },
+        "owner": {
+          "anyOf": [
+            {
+              "maxLength": 64,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Owner"
+        },
+        "sent": {
+          "format": "date-time",
+          "title": "Sent",
+          "type": "string"
+        },
+        "sources": {
+          "default": [],
+          "items": {
+            "pattern": "^[a-z0-9][a-z0-9-]{0,15}$",
+            "type": "string"
+          },
+          "maxItems": 32,
+          "title": "Sources",
+          "type": "array"
+        },
+        "station": {
+          "pattern": "^[a-z0-9-]{3,32}$",
+          "title": "Station",
+          "type": "string"
+        },
+        "v": {
+          "const": 1,
+          "title": "V",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "v",
+        "station",
+        "sent",
+        "display_name"
+      ],
+      "title": "Registry",
+      "type": "object"
+    },
     "Spectrum": {
       "description": "One minute of the 900 MHz band from one station, on `rf/v1/<station>/spectrum`.\n\nBin `i` covers `f_start_hz + i * bin_hz` to the next bin. Per bin: the\nmedian, the 95th percentile and the peak level over the minute's\nsweeps, and `busy`, the share of sweeps in percent in which the bin\nstood more than 6 dB above its own median. The four arrays have one\nentry per bin. Levels compare one station with itself over time,\nnever two stations (design 3.5).",
       "properties": {
@@ -344,6 +414,19 @@
           "title": "Peak",
           "type": "array"
         },
+        "source": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z0-9][a-z0-9-]{0,15}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source"
+        },
         "station": {
           "pattern": "^[a-z0-9-]{3,32}$",
           "title": "Station",
@@ -384,7 +467,7 @@
       "type": "object"
     },
     "Status": {
-      "description": "The heartbeat, published retained on `rf/v1/<station>/status`.",
+      "description": "The heartbeat, published retained.\n\nAn agent with a `source` publishes it on\n`rf/v1/<station>/status/<source>`, so the sources of one location do\nnot overwrite each other's heartbeat. An agent without one publishes\nit on `rf/v1/<station>/status`.",
       "properties": {
         "agent_version": {
           "anyOf": [
@@ -482,6 +565,19 @@
           "title": "Sent",
           "type": "string"
         },
+        "source": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z0-9][a-z0-9-]{0,15}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source"
+        },
         "station": {
           "pattern": "^[a-z0-9-]{3,32}$",
           "title": "Station",
@@ -503,10 +599,20 @@
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "Published by rf-agent. Observations go to rf/v1/<station>/<kind>, the heartbeat to rf/v1/<station>/status, retained, and a minute of the 900 MHz band to rf/v1/<station>/spectrum. See docs/design/rf-map.md section 4. Generated from sonoran/rf/schema.py.",
+  "description": "Published by rf-agent. Observations go to rf/v1/<station>/<kind>, the heartbeat to rf/v1/<station>/status/<source> (or rf/v1/<station>/status without a source), retained, and a minute of the 900 MHz band to rf/v1/<station>/spectrum. The registrar alone publishes the Registry to rf/v1/<station>/registry, retained. See docs/design/rf-map.md section 4. Generated from sonoran/rf/schema.py.",
   "else": {
     "else": {
-      "$ref": "#/$defs/Status"
+      "else": {
+        "$ref": "#/$defs/Status"
+      },
+      "if": {
+        "required": [
+          "display_name"
+        ]
+      },
+      "then": {
+        "$ref": "#/$defs/Registry"
+      }
     },
     "if": {
       "properties": {
