@@ -230,7 +230,7 @@ source has its own broker login and its own heartbeat, so two sources
 do not disconnect each other or overwrite each other's heartbeat.
 
 A location has an owner, a Discord member. The owner makes a login
-for each source with the Redbot cog `rfstations`. The cog calls the
+for each source with the `sonoran` Redbot cog (`sonoran-cog`). The cog calls the
 registrar, which holds the broker's admin key. The bot never holds it.
 The registrar makes one login per source, `rf-<station>-<source>`. Its
 ACL lets it publish to `rf/v1/<station>/status/<source>` and to

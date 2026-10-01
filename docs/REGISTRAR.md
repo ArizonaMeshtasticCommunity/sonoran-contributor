@@ -1,7 +1,7 @@
 # rf-registrar
 
 `rf-registrar` makes and removes the broker logins of RF stations. The
-community Discord bot calls it, through the `rfstations` cog. Members
+community Discord bot calls it, through the `sonoran` cog in `sonoran-cog`. Members
 manage their own station there. No operator has to touch the broker.
 
 ## Why a separate service
