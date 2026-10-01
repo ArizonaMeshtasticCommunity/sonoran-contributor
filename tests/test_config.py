@@ -37,6 +37,11 @@ def test_defaults():
     assert (source.reader, source.host, source.port) == ("beast", "readsb", 30005)
 
 
+def test_a_source_id_is_optional_and_lower_cased():
+    assert load(BASE).source_id is None
+    assert load(env(SOURCE_ID="Sweeper")).source_id == "sweeper"
+
+
 def test_the_readme_example():
     config = load(
         {
@@ -103,6 +108,9 @@ def test_every_kind_is_built_now():
         ({"ADSB_INTERVAL_S": "0.5"}, "ADSB_INTERVAL_S"),
         ({"ADSB_INTERVAL_S": "nan"}, "ADSB_INTERVAL_S"),
         ({"LOG_LEVEL": "LOUD"}, "LOG_LEVEL"),
+        ({"SOURCE_ID": "-pi"}, "SOURCE_ID"),
+        ({"SOURCE_ID": "a" * 17}, "SOURCE_ID"),
+        ({"SOURCE_ID": "pi/one"}, "SOURCE_ID"),
     ],
 )
 def test_bad_settings_are_named(changes, needle):

@@ -1,6 +1,7 @@
 name: Image
 
-# Publishes ghcr.io/arizonameshtasticcommunity/rf-agent and rf-sweep.
+# Publishes ghcr.io/arizonameshtasticcommunity/rf-agent, rf-sweep and
+# rf-registrar.
 #
 # A tag `v1.2.3` publishes `1.2.3`, `1.2` and `1`, so a member who runs
 # `rf-agent:1` gets every compatible release. `main` publishes `main`.
@@ -22,8 +23,14 @@ jobs:
         include:
           - name: rf-agent
             file: Dockerfile
+            platforms: linux/amd64,linux/arm64,linux/arm/v7
           - name: rf-sweep
             file: Dockerfile.sweep
+            platforms: linux/amd64,linux/arm64,linux/arm/v7
+          # Runs beside the broker, never at a station.
+          - name: rf-registrar
+            file: Dockerfile.registrar
+            platforms: linux/amd64,linux/arm64
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3
@@ -46,7 +53,7 @@ jobs:
         with:
           context: .
           file: ${{ matrix.file }}
-          platforms: linux/amd64,linux/arm64,linux/arm/v7
+          platforms: ${{ matrix.platforms }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

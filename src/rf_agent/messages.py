@@ -45,6 +45,10 @@ ID_RULES = {
     "ism": re.compile(r"^[a-z0-9][a-z0-9_.-]{0,63}$"),
 }
 STATION_ID = re.compile(r"^[a-z0-9-]{3,32}$")
+# This agent's name within its station, when the station has more than
+# one Pi (Sonoran #305). The station is the place on the map; each Pi is
+# a source with its own login and its own heartbeat.
+SOURCE_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,15}$")
 AIRCRAFT_KINDS = ("adsb", "uat")
 FEET = 0.3048
 
@@ -197,17 +201,21 @@ def _station(call: str | None) -> str | None:
     return ident if ID_RULES["aprs"].match(ident) and not ident.startswith(";") else None
 
 
-def batch(station: str, kind: str, obs: list[Observation], sent: float) -> dict[str, Any]:
+def batch(
+    station: str,
+    kind: str,
+    obs: list[Observation],
+    sent: float,
+    source: str | None = None,
+) -> dict[str, Any]:
     """Return one batch message. The caller keeps it to MAX_OBS points."""
     if len(obs) > MAX_OBS:
         raise ValueError(f"a batch holds at most {MAX_OBS} observations")
-    return {
-        "v": VERSION,
-        "station": station,
-        "kind": kind,
-        "sent": timestamp(sent),
-        "obs": [o.to_json() for o in obs],
-    }
+    out: dict[str, Any] = {"v": VERSION, "station": station}
+    if source is not None:
+        out["source"] = source
+    out.update(kind=kind, sent=timestamp(sent), obs=[o.to_json() for o in obs])
+    return out
 
 
 @dataclass
@@ -245,13 +253,13 @@ def status(
     position: tuple[float, float] | None,
     precision_m: int,
     mesh_node: str | None = None,
+    source: str | None = None,
 ) -> dict[str, Any]:
     """Return the heartbeat. `position` must already be rounded."""
-    out: dict[str, Any] = {
-        "v": VERSION,
-        "station": station,
-        "sent": timestamp(sent),
-    }
+    out: dict[str, Any] = {"v": VERSION, "station": station}
+    if source is not None:
+        out["source"] = source
+    out["sent"] = timestamp(sent)
     if position is not None:
         out["lat"], out["lon"] = position
         out["precision_m"] = precision_m

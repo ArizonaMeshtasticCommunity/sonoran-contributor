@@ -216,15 +216,37 @@ which the bin stood more than 6 dB above its own median. See 4.2.
 ### 4.1 Topics and logins
 
 ```
-rf/v1/<station_id>/<kind>        # observations
-rf/v1/<station_id>/status        # heartbeat, retained
+rf/v1/<station_id>/<kind>                # observations
+rf/v1/<station_id>/spectrum              # a minute of the 900 MHz band
+rf/v1/<station_id>/status/<source>       # a source's heartbeat, retained
+rf/v1/<station_id>/status                # heartbeat of an agent with no source, retained
+rf/v1/<station_id>/registry              # the location's entry, retained, registrar only
 ```
 
-Each station gets its own broker login. Its ACL lets it publish to
-`rf/v1/<its own id>/#` and nothing else, and subscribe to nothing.
-`rf-ingest` gets one read-only login for `rf/v1/#`. Neither login can
-touch `msh/#`. The logins are made by hand for now; a member asks, an
-operator creates one.
+A station is a **location**: one place on the map (#305). A location
+can have more than one **source**, one Pi or decoder each. For example,
+one Pi runs the ADS-B decoder and another runs the 900 MHz sweep. Each
+source has its own broker login and its own heartbeat, so two sources
+do not disconnect each other or overwrite each other's heartbeat.
+
+A location has an owner, a Discord member. The owner makes a login
+for each source with the `sonoran` Redbot cog (`sonoran-cog`). The cog calls the
+registrar, which holds the broker's admin key. The bot never holds it.
+The registrar makes one login per source, `rf-<station>-<source>`. Its
+ACL lets it publish to `rf/v1/<station>/status/<source>` and to
+`rf/v1/<station>/<kind>`, and nothing else. It cannot publish another
+source's heartbeat or the registry, and it subscribes to nothing. The
+registrar publishes the registry entry through the broker's API: the
+display name, the owner's name and the sources that hold a login.
+`rf-ingest` gets one read-only login for `rf/v1/#`. No RF login can
+touch `msh/#`.
+
+A login made by hand before #305 publishes to `rf/v1/<its own id>/#`.
+It keeps working. Its agent sends no source.
+
+One sweeper per location: two minutes of the band for the same
+location and minute keep the first. A second sweeper at one site needs
+its own location.
 
 QoS 0 for observations: a lost point is replaced by the next one 20 s
 later. The heartbeat is QoS 1 and retained, so the ingest knows every

@@ -18,6 +18,7 @@ tab. Sonoran is a separate repository,
 | The `rf-sweep` spectrum container (Phase 2) | Storage, retention, dedup across stations |
 | Design sections 3 and 4 | Design sections 5 to 7 |
 | A copy of the contract | The source of the contract, `sonoran/rf/schema.py` |
+| `rf-registrar`, the broker logins of stations (`docs/REGISTRAR.md`) | The registry entries it publishes, stored per location |
 
 ## 2. The contract
 
@@ -61,7 +62,10 @@ check this, not only the examples.
   which serves nothing and accepts no connection, and every datagram is
   treated as untrusted input. Nothing else binds a port.
 - **Publish to the station's own topic only**, `rf/v1/<station>/...`. The
-  broker enforces it; the agent must not rely on that.
+  broker enforces it; the agent must not rely on that. With `SOURCE_ID`,
+  the heartbeat goes to `rf/v1/<station>/status/<source>`.
+- **The registrar never stores a password**, and never logs one. It is
+  in one answer, once.
 - **Never exit on bad input.** A bad frame is counted and skipped. A
   decoder or broker that goes away is retried with backoff.
 
