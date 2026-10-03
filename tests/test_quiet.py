@@ -168,3 +168,147 @@ def test_durations_read_plainly(seconds, text):
     from rf_agent.quiet import _duration
 
     assert _duration(seconds) == text
+
+
+async def test_a_decoder_that_sends_a_little_then_closes_is_a_failure(caplog):
+    """readsb with its dongle gone, 2026-10-03: a few bytes, close, every 5 s.
+
+    Before, the first bytes counted as working: the backoff reset and each
+    close was logged, about 60 lines in 5 minutes, and no alert.
+    """
+    connections = 0
+
+    async def blip(reader, writer):
+        nonlocal connections
+        connections += 1
+        writer.write(b"\x1a1" + bytes(14))
+        await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_server(blip, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    sent = []
+    from rf_agent.quiet import set_notifier
+
+    set_notifier(sent.append)
+    try:
+        with caplog.at_level(logging.INFO):
+            task = asyncio.create_task(
+                read_stream(
+                    "adsb=beast://x",
+                    "127.0.0.1",
+                    port,
+                    lambda d, t: [],
+                    lambda p: None,
+                    backoff=Backoff(first=0.01, most=10),
+                    healthy_s=5,
+                )
+            )
+            await asyncio.sleep(1.0)
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+    finally:
+        set_notifier(None)
+        server.close()
+    assert 2 <= connections <= 9, "backed off, not a tight loop"
+    logged = lines(caplog, logging.INFO, "rf_")
+    assert sum("closing the connection" in m for m in logged) == 1, logged
+    assert not any("closed the connection" in m for m in logged)
+
+
+async def test_a_decoder_that_stays_up_counts_as_working_again(caplog):
+    """The control: a connection that lasts recovers the condition once."""
+    attempts = 0
+
+    async def flaky(reader, writer):
+        nonlocal attempts
+        attempts += 1
+        if attempts <= 2:
+            writer.close()
+            return
+        for _ in range(40):
+            writer.write(b"x")
+            await writer.drain()
+            await asyncio.sleep(0.02)
+        await asyncio.sleep(5)
+
+    server = await asyncio.start_server(flaky, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    with caplog.at_level(logging.INFO):
+        task = asyncio.create_task(
+            read_stream(
+                "aprs=kiss://x",
+                "127.0.0.1",
+                port,
+                lambda d, t: [],
+                lambda p: None,
+                backoff=Backoff(first=0.01, most=0.05),
+                healthy_s=0.3,
+            )
+        )
+        await asyncio.sleep(1.5)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+    server.close()
+    logged = lines(caplog, logging.INFO, "rf_")
+    assert sum("reading again" in m for m in logged) == 1, logged
+    assert len(lines(caplog, logging.WARNING, "rf_")) == 1
+
+
+REPEATER = """
+import sys, time, datetime
+t = datetime.datetime(2026, 10, 3, 15, 32, 0)
+while True:
+    stamp = t.strftime("%Y-%m-%d, %H:%M:%S")
+    for low in (902000000, 903953125):
+        print(f"{stamp}, {low}, {low + 1953125}, 48828.12, 3000, -31.8, -32.0, -31.9", flush=True)
+    t += datetime.timedelta(seconds=5)
+    time.sleep(0.005)
+"""
+
+CHANGING = REPEATER.replace("-31.8", "{-31.8 - (t.second % 7) / 10:.2f}")
+
+
+async def test_rf_sweep_restarts_rtl_power_that_repeats_its_sweep(caplog, tmp_path):
+    """Unplugged, rtl_power prints its last sweep forever. A restart finds the
+    dongle again; without one, it stays frozen until a person steps in."""
+    starts = tmp_path / "starts"
+    script = f"open({str(starts)!r}, 'a').write('x')\n" + REPEATER
+    stop = asyncio.Event()
+    with caplog.at_level(logging.INFO):
+        task = asyncio.create_task(
+            run_sweeper(
+                [sys.executable, "-c", script],
+                Broadcaster(b""),
+                stop,
+                healthy_s=30,
+                first_delay=0.01,
+                repeat_limit=5,
+            )
+        )
+        await asyncio.sleep(2.0)
+        stop.set()
+        await task
+    assert len(starts.read_text()) >= 2, "rtl_power was started again"
+    warnings = lines(caplog, logging.WARNING, "rf_")
+    assert len(warnings) == 1 and "restarting it" in warnings[0], warnings
+
+
+async def test_rf_sweep_leaves_a_working_rtl_power_alone(tmp_path):
+    starts = tmp_path / "starts"
+    script = f"open({str(starts)!r}, 'a').write('x')\n" + CHANGING
+    stop = asyncio.Event()
+    task = asyncio.create_task(
+        run_sweeper(
+            [sys.executable, "-c", script],
+            Broadcaster(b""),
+            stop,
+            healthy_s=30,
+            first_delay=0.01,
+            repeat_limit=5,
+        )
+    )
+    await asyncio.sleep(1.5)
+    stop.set()
+    await task
+    assert starts.read_text() == "x", "never restarted"

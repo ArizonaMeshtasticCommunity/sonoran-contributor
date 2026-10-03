@@ -193,7 +193,8 @@ Set `ALERT_WEBHOOK` to a Discord webhook (channel → Edit Channel →
 Integrations → Webhooks → New Webhook → Copy Webhook URL), and the agent
 posts there when something about your station changes:
 
-- a decoder stops answering, or answers again;
+- a decoder stops answering, or keeps closing the connection (readsb
+  does that when its dongle is gone), or answers again;
 - the broker is out of reach, or back;
 - the 900 MHz sweep stalls (the same sweep over and over), or sends
   nothing for 3 minutes, which most often means the dongle is unplugged;
@@ -220,11 +221,13 @@ agent condenses each minute into one message per station: for each
 often the bin stood more than 6 dB above its own median. That last
 number is the one that says "something keeps sitting on LongFast".
 
-A dongle that stalls can keep printing the same sweep. The agent drops
-a sweep that is exactly the same as the one before it, sends no minute
-that holds only repeats, and logs `the dongle may have stalled`. The map
-then shows a gap, not a flat, quiet band. Restart `rf-sweep` or replug
-the dongle when you see that line.
+A dongle that is unplugged or stalls does not make `rtl_power` exit: it
+prints its last sweep over and over, and never opens the dongle again.
+The agent drops a sweep exactly the same as the one before it and sends
+no minute that holds only repeats, so the map shows a gap, not a flat,
+quiet band. After about a minute of repeats, `rf-sweep` restarts
+`rtl_power` itself, so a dongle plugged back in is found again with no
+one restarting anything.
 
 ```yaml
 services:

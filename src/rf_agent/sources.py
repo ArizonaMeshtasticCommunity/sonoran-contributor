@@ -30,6 +30,10 @@ CONNECT_TIMEOUT_S = 10.0
 # A stream silent for this long is assumed dead and opened again. At
 # night a quiet sky is normal, so this is long.
 IDLE_S = 300.0
+# A connection counts as working once it has stayed up this long. readsb
+# with its dongle gone accepts, sends a few bytes and closes, over and
+# over (2026-10-03); first data alone does not prove anything.
+HEALTHY_S = 30.0
 POLL_S = 1.0
 MAX_JSON_BYTES = 16 << 20
 
@@ -82,16 +86,20 @@ async def read_stream(
     sink: Sink,
     idle_s: float = IDLE_S,
     backoff: Backoff | None = None,
+    healthy_s: float = HEALTHY_S,
 ) -> None:
     """Read a decoder's TCP output forever.
 
-    A connection counts as working once data arrives. Only then is the
-    backoff reset and a recovery logged, so a decoder that accepts and
-    at once closes is retried with backoff, not in a tight loop.
+    A connection counts as working once it has stayed up `healthy_s`.
+    Only then is the backoff reset and a recovery logged. A decoder that
+    keeps closing sooner, with or without sending a little first, is a
+    failure: logged once, alerted, and retried with backoff, not in a
+    tight loop.
     """
     backoff = backoff or Backoff()
     down = Condition(logger, name)
     connected_once = False
+    loop = asyncio.get_running_loop()
     while True:
         writer = None
         try:
@@ -101,17 +109,20 @@ async def read_stream(
             if not connected_once and not down.failing:
                 logger.info("%s: connected", name)
             connected_once = True
-            got_data = False
+            opened = loop.time()
+            proven = False
             while True:
                 data = await asyncio.wait_for(reader.read(65536), idle_s)
                 if not data:
-                    if got_data:
+                    if proven:
                         logger.info("%s: the decoder closed the connection", name)
                     else:
-                        down.bad("the decoder closed the connection before sending anything")
+                        down.bad(
+                            f"the decoder keeps closing the connection within {healthy_s:.0f} s"
+                        )
                     break
-                if not got_data:
-                    got_data = True
+                if not proven and loop.time() - opened >= healthy_s:
+                    proven = True
                     backoff.reset()
                     down.ok("reading again")
                 _handle(name, handler, data, sink)
