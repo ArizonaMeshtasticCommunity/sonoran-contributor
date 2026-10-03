@@ -38,6 +38,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from rf_agent.config import RF_SWEEP_PORT
+from rf_agent.quiet import Condition
 from rf_agent.spectrum import HEADER, Grid, parse_range
 
 logger = logging.getLogger("rf_sweep")
@@ -163,11 +164,32 @@ class Broadcaster:
                 writer.write(line)
 
 
-async def run_sweeper(command: Sequence[str], broadcast: Broadcaster, stop: asyncio.Event) -> None:
-    """Run the sweep command until `stop`, starting it again when it ends."""
-    delay = 1.0
+# A run of rtl_power that lasts this long is working: its own lines are
+# logged from then on, and the backoff starts again from a second.
+HEALTHY_S = 60.0
+# The most stderr lines kept back from one run that has not proved itself.
+MAX_HELD_LINES = 50
+
+
+async def run_sweeper(
+    command: Sequence[str],
+    broadcast: Broadcaster,
+    stop: asyncio.Event,
+    healthy_s: float = HEALTHY_S,
+    first_delay: float = 1.0,
+) -> None:
+    """Run the sweep command until `stop`, starting it again when it ends.
+
+    With the dongle unplugged, rtl_power prints a few lines and exits at
+    once, and is started again for as long as that lasts. Logging those
+    lines on every start filled members' disks (2026-10-03). So a run's
+    lines are held back until it has run `healthy_s`. A run that ends
+    before then is a failure: its lines are logged only when the failure
+    is new or different, and otherwise only counted (`quiet.Condition`).
+    """
+    delay = first_delay
+    down = Condition(logger, command[0])
     while not stop.is_set():
-        started = asyncio.get_running_loop().time()
         try:
             proc = await asyncio.create_subprocess_exec(
                 *command,
@@ -176,14 +198,18 @@ async def run_sweeper(command: Sequence[str], broadcast: Broadcaster, stop: asyn
                 stderr=asyncio.subprocess.PIPE,
             )
         except OSError as exc:
-            logger.error("cannot start %s: %s", command[0], exc)
+            down.bad(f"cannot start: {exc}")
         else:
             assert proc.stdout is not None and proc.stderr is not None
-            logs = asyncio.create_task(_log_lines(proc.stderr))
+            held: list[str] = []
+            live = asyncio.Event()
+            logs = asyncio.create_task(_log_lines(proc.stderr, held, live))
             reading = asyncio.create_task(_relay(proc.stdout, broadcast))
             stopping = asyncio.create_task(stop.wait())
+            proving = asyncio.create_task(_prove(healthy_s, held, live, down))
             await asyncio.wait({reading, stopping}, return_when=asyncio.FIRST_COMPLETED)
             stopping.cancel()
+            proving.cancel()
             if proc.returncode is None:
                 with contextlib.suppress(ProcessLookupError):
                     proc.terminate()
@@ -196,15 +222,35 @@ async def run_sweeper(command: Sequence[str], broadcast: Broadcaster, stop: asyn
             # them open, and must not keep this waiting.
             reading.cancel()
             logs.cancel()
-            await asyncio.gather(reading, logs, return_exceptions=True)
+            await asyncio.gather(reading, logs, proving, return_exceptions=True)
             if stop.is_set():
                 return
-            logger.warning("%s ended with %s", command[0], proc.returncode)
-            if asyncio.get_running_loop().time() - started > 60:
-                delay = 1.0
+            if live.is_set():
+                # It worked for a while, then stopped: worth a line each time.
+                logger.warning("%s ended with %s", command[0], proc.returncode)
+                delay = first_delay
+            else:
+                failure = f"ended with {proc.returncode} at start"
+                if held:
+                    failure += f": {held[-1]}"
+                if failure != down.text:
+                    # New, or changed: say what it printed, once.
+                    for text in held:
+                        logger.info("rtl_power: %s", text)
+                down.bad(failure)
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(stop.wait(), delay)
         delay = min(delay * 2, BACKOFF_MAX_S)
+
+
+async def _prove(healthy_s: float, held: list[str], live: asyncio.Event, down: Condition) -> None:
+    """After `healthy_s`, log what the run printed so far and go live."""
+    await asyncio.sleep(healthy_s)
+    for text in held:
+        logger.info("rtl_power: %s", text)
+    held.clear()
+    live.set()
+    down.ok("sweeping again")
 
 
 async def _relay(stream: asyncio.StreamReader, broadcast: Broadcaster) -> None:
@@ -212,9 +258,13 @@ async def _relay(stream: asyncio.StreamReader, broadcast: Broadcaster) -> None:
         broadcast.send(line)
 
 
-async def _log_lines(stream: asyncio.StreamReader) -> None:
+async def _log_lines(stream: asyncio.StreamReader, held: list[str], live: asyncio.Event) -> None:
     while line := await stream.readline():
-        logger.info("rtl_power: %s", line.decode(errors="replace").rstrip())
+        text = line.decode(errors="replace").rstrip()
+        if live.is_set():
+            logger.info("rtl_power: %s", text)
+        elif len(held) < MAX_HELD_LINES:
+            held.append(text)
 
 
 async def main(config: SweepConfig, command: Sequence[str] | None = None) -> None:

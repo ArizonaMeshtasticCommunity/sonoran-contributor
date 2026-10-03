@@ -35,6 +35,7 @@ from rf_agent import __version__
 from rf_agent.config import Config
 from rf_agent.geo import round_position
 from rf_agent.messages import MAX_OBS, Counts, Observation, batch, status
+from rf_agent.quiet import Condition
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +141,8 @@ class Publisher:
             round_position(*config.station, config.precision_m) if config.station else None
         )
         self._reported_overflow = 0
+        # Called after each heartbeat the broker took: proof the session works.
+        self.on_beat: Callable[[], None] | None = None
 
     async def flush(self, client: Client) -> int:
         """Publish every waiting point, in batches. Returns how many were sent.
@@ -201,6 +204,8 @@ class Publisher:
         except BaseException:
             self.counts.give_back(counts)
             raise
+        if self.on_beat is not None:
+            self.on_beat()
         logger.info(
             "heartbeat: heard %d, sent %d, thinned %d, waiting %d",
             counts.heard,
@@ -251,24 +256,39 @@ async def run(
     """Keep a connection to the broker and serve it, until `stop` is set.
 
     A broker that is down or refuses the login is retried with backoff,
-    up to a minute apart. The agent never exits over it.
+    up to a minute apart. The agent never exits over it. The failure is
+    logged when it starts or changes and then once an hour, not on each
+    retry, and the recovery once a heartbeat has gone through.
     """
     delay = first_delay
+    down = Condition(logger, "broker")
+    first = True
+
+    def beat_ok() -> None:
+        nonlocal delay
+        delay = first_delay
+        down.ok("connected again")
+
+    publisher.on_beat = beat_ok
     while True:
         try:
             async with connect(publisher.config) as client:
-                logger.info(
-                    "connected to broker %s:%d",
-                    publisher.config.broker_host,
-                    publisher.config.broker_port,
-                )
-                delay = first_delay
+                if first and not down.failing:
+                    logger.info(
+                        "connected to broker %s:%d",
+                        publisher.config.broker_host,
+                        publisher.config.broker_port,
+                    )
+                first = False
                 await publisher.serve(client, stop)
                 return
         except (aiomqtt.MqttError, OSError) as exc:
-            logger.warning("broker: %s; retry in %.0f s", exc, delay)
-        except Exception:
-            logger.exception("broker connection failed; retry in %.0f s", delay)
+            down.bad(str(exc))
+        except Exception as exc:
+            if not down.failing:
+                logger.exception("broker connection failed")
+            down.bad(f"connection failed: {exc}")
+        logger.debug("broker: retry in %.0f s", delay)
         if stop.is_set():
             return
         try:

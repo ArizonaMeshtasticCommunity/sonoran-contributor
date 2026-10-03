@@ -74,6 +74,10 @@ services:
   rf-agent:
     image: ghcr.io/arizonameshtasticcommunity/rf-agent:1
     restart: unless-stopped
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       STATION_ID: tempe-roof
       SOURCE_ID: adsb-pi
@@ -105,6 +109,14 @@ heard, sent and thinned. A decoder or broker that goes away is retried,
 up to a minute apart; the agent never needs a restart for it. A setting
 that is wrong stops it at start, with every problem named.
 
+A failure that lasts is logged when it starts or changes, once an hour
+while it continues, and once when it ends. It is not logged on every
+retry, so an unplugged dongle or a decoder that is down for a week does
+not fill the disk. The `logging:` lines above cap what Docker keeps, at
+30 MB per container: Docker's default keeps everything. If your Docker
+logs to journald or syslog instead, cap that there, such as
+`SystemMaxUse=` in `journald.conf`.
+
 > [!NOTE]
 > dump978-fa serves raw frames on 30978 and decoded JSON on 30979. The
 > agent reads the JSON. Pointed at the raw port, it logs that it is.
@@ -124,6 +136,7 @@ Every setting is an environment variable.
 | `ADSB_INTERVAL_S` | Seconds between two points for one aircraft. At least 1. | `20` |
 | `LOG_LEVEL` | `DEBUG`, `INFO`, `WARNING` or `ERROR`. | `INFO` |
 | `ISM_ALLOW` | `rtl_433` model names to pass, comma separated, case ignored. Empty means none pass. | empty |
+| `ALERT_WEBHOOK` | Your own Discord webhook, for alerts about this station. See [alerts](#-alerts). | — |
 | `SITE_MESH_NODE` | The Meshtastic node at this site, such as `!a1b2c3d4`, if any, so its own bursts are not read as interference. | — |
 
 `rf-sweep` has settings of its own; see [the 900 MHz band](#-the-900-mhz-band).
@@ -174,6 +187,29 @@ ADS-R rebroadcasts are left out; UAT aircraft come from `uat=`.
 Kinds of a later phase are accepted in `SOURCES` and ignored, with a
 warning, until their phase is built.
 
+## 🔔 Alerts
+
+Set `ALERT_WEBHOOK` to a Discord webhook (channel → Edit Channel →
+Integrations → Webhooks → New Webhook → Copy Webhook URL), and the agent
+posts there when something about your station changes:
+
+- a decoder stops answering, or answers again;
+- the broker is out of reach, or back;
+- the 900 MHz sweep stalls (the same sweep over and over), or sends
+  nothing for 3 minutes, which most often means the dongle is unplugged;
+  and when fresh sweeps return.
+
+One message when a problem starts or changes, and one when it ends.
+Never one per retry. A decoder or the broker must be down for 2 minutes
+before you hear about it, so a quick restart sends nothing, and you get
+an "ended" message only for a problem you were told about. An error
+that keeps switching between two forms is one problem, not news each
+time. Alerts that come close together arrive as one message. The log
+still records everything, as it happens. The URL holds a token: keep it out of anything you share. The
+agent never logs it.
+
+A Pi that loses power or its network cannot send its own alert.
+
 ## 📶 The 900 MHz band
 
 For a member with a **spare** dongle and a 915 MHz antenna. `rf-sweep`
@@ -184,11 +220,21 @@ agent condenses each minute into one message per station: for each
 often the bin stood more than 6 dB above its own median. That last
 number is the one that says "something keeps sitting on LongFast".
 
+A dongle that stalls can keep printing the same sweep. The agent drops
+a sweep that is exactly the same as the one before it, sends no minute
+that holds only repeats, and logs `the dongle may have stalled`. The map
+then shows a gap, not a flat, quiet band. Restart `rf-sweep` or replug
+the dongle when you see that line.
+
 ```yaml
 services:
   rf-sweep:
     image: ghcr.io/arizonameshtasticcommunity/rf-sweep:main
     restart: unless-stopped
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
     devices:
       - /dev/bus/usb:/dev/bus/usb
     environment:
@@ -197,6 +243,10 @@ services:
   rf-agent:
     image: ghcr.io/arizonameshtasticcommunity/rf-agent:main
     restart: unless-stopped
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       STATION_ID: tempe-roof
       BROKER_URL: mqtts://broker.example:8883

@@ -18,6 +18,14 @@ At the end of each minute, per grid bin: the median, the 95th
 percentile and the peak level, in tenths of a dB, and `busy`, the share
 of sweeps in percent in which the bin stood more than 6 dB above its own
 median. A bin no sweep reached is None. Minutes are the agent's clock.
+
+A sweep exactly the same as the one before it is not counted. A live
+receiver never repeats itself: noise moves every bin a little from one
+sweep to the next. On 2026-10-02 a station's dongle stalled, and for 38
+minutes `rtl_power` printed the same sweep over and over. The agent sent
+it as real minutes: a flat band with no activity, which reads as a quiet
+band rather than a dead receiver. Now a repeat is dropped, a minute with
+no fresh sweep is not sent, and the log says so, so the map shows a gap.
 """
 
 from __future__ import annotations
@@ -30,12 +38,16 @@ from typing import Any
 
 from rf_agent.dump978 import LineSplitter
 from rf_agent.messages import VERSION, Observation, timestamp
+from rf_agent.quiet import Condition
 
 logger = logging.getLogger(__name__)
 
 HEADER = "# rf-sweep"
 MAX_BINS = 4096
 BUSY_DB = 6.0
+# Minutes in a row with no sweep at all before it is reported: rf-sweep
+# is up but rtl_power is not sweeping, most often an unplugged dongle.
+EMPTY_MINUTES = 3
 LEVEL_MIN, LEVEL_MAX = -2000, 1000  # tenths of a dB, as the contract allows
 
 
@@ -101,6 +113,16 @@ class SpectrumSummary:
         self._minute: int | None = None
         self._ready: list[dict[str, Any]] = []
         self._warned_no_header = False
+        # The last sweep counted, to find a receiver that repeats itself.
+        self._last_sweep: dict[int, float] | None = None
+        self._repeats = 0
+        # Minutes not sent in a row because every sweep was a repeat.
+        self.frozen_minutes = 0
+        # Minutes in a row with no sweep at all.
+        self.empty_minutes = 0
+        # Each check already waits whole minutes before it reports, so
+        # its alert is not delayed again.
+        self.health = Condition(logger, "spectrum", alert_after_s=0)
 
     def feed(self, data: bytes, now: float) -> list[Observation]:
         """Handle bytes from `rf-sweep`. Spectrum has no observations: see `tick`."""
@@ -157,6 +179,7 @@ class SpectrumSummary:
             # A new band or gain: what was gathered under the old one is
             # not comparable, so it is set aside.
             self._reset()
+            self._last_sweep = None
             logger.info("spectrum: rf-sweep sweeps %s Hz at a fixed %s dB", grid, gain)
         self.grid, self.gain_db = grid, gain
 
@@ -173,6 +196,13 @@ class SpectrumSummary:
     def _end_sweep(self) -> None:
         if not self._sweep:
             return
+        if self._sweep == self._last_sweep:
+            # The same levels in every bin as the sweep before: not a
+            # measurement, a receiver that has stopped.
+            self._repeats += 1
+            self._sweep = {}
+            return
+        self._last_sweep = self._sweep
         if not self._samples and self.grid is not None:
             self._samples = [[] for _ in range(self.grid.bins)]
         for b, db in self._sweep.items():
@@ -185,10 +215,37 @@ class SpectrumSummary:
         self._sweep = {}
         self._samples = []
         self._sweeps = 0
+        self._repeats = 0
+
+    def _note_repeats(self) -> None:
+        """Report a receiver that repeats itself, or sends nothing, and its return."""
+        if self._repeats and not self._sweeps:
+            self.frozen_minutes += 1
+            self.health.bad(
+                "rf-sweep sends the same sweep over and over; the dongle may have stalled. "
+                "Minutes are not sent until it changes"
+            )
+        elif not self._sweeps:
+            self.empty_minutes += 1
+            if self.empty_minutes >= EMPTY_MINUTES:
+                self.health.bad(
+                    f"no sweeps from rf-sweep for {EMPTY_MINUTES} minutes or more; "
+                    "is the dongle plugged in?"
+                )
+        else:
+            if self.health.failing:
+                self.health.ok(
+                    f"fresh sweeps again after {self.frozen_minutes + self.empty_minutes} "
+                    "minutes not sent"
+                )
+            self.frozen_minutes = self.empty_minutes = 0
+            if self._repeats:
+                logger.debug("spectrum: %d repeated sweeps dropped this minute", self._repeats)
 
     def _close(self, minute: int) -> dict[str, Any] | None:
         self._end_sweep()
         self._key = None
+        self._note_repeats()
         if not self._sweeps or self.grid is None or self.gain_db is None:
             if self._sweeps and self.gain_db is None:
                 logger.warning("spectrum: rf-sweep named no gain; a minute is not sent")
