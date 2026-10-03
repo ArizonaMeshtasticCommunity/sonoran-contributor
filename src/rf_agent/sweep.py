@@ -174,6 +174,10 @@ MAX_HELD_LINES = 50
 # it prints its last sweep forever and never opens the dongle again
 # (2026-10-03). Only a restart finds a dongle plugged back in.
 REPEAT_LIMIT = 12
+# Seconds with no sweep line before rtl_power is restarted. Restarted
+# with its dongle gone, rtl_power can sit and print nothing, and then
+# never exits on its own (2026-10-03). A sweep takes about 5 s.
+SILENT_S = 120.0
 
 
 async def run_sweeper(
@@ -183,6 +187,7 @@ async def run_sweeper(
     healthy_s: float = HEALTHY_S,
     first_delay: float = 1.0,
     repeat_limit: int = REPEAT_LIMIT,
+    silent_s: float = SILENT_S,
 ) -> None:
     """Run the sweep command until `stop`, starting it again when it ends.
 
@@ -210,9 +215,12 @@ async def run_sweeper(
             held: list[str] = []
             live = asyncio.Event()
             logs = asyncio.create_task(_log_lines(proc.stderr, held, live))
-            reading = asyncio.create_task(_relay(proc.stdout, broadcast, repeat_limit))
+            swept = asyncio.Event()
+            reading = asyncio.create_task(
+                _relay(proc.stdout, broadcast, repeat_limit, silent_s, swept)
+            )
             stopping = asyncio.create_task(stop.wait())
-            proving = asyncio.create_task(_prove(healthy_s, held, live, down))
+            proving = asyncio.create_task(_prove(healthy_s, held, live, down, swept))
             await asyncio.wait({reading, stopping}, return_when=asyncio.FIRST_COMPLETED)
             stopping.cancel()
             proving.cancel()
@@ -231,13 +239,19 @@ async def run_sweeper(
             await asyncio.gather(reading, logs, proving, return_exceptions=True)
             if stop.is_set():
                 return
-            stuck = not reading.cancelled() and reading.exception() is None and reading.result()
-            if stuck:
+            stuck = None
+            if not reading.cancelled() and reading.exception() is None:
+                stuck = reading.result()
+            if stuck == "repeats":
                 # Restarted on purpose: the same sweep over and over.
                 down.bad(
                     f"sent the same sweep {repeat_limit} times; restarting it to find the dongle"
                 )
-                delay = first_delay
+            elif stuck == "silent":
+                # Restarted on purpose: running, and printing nothing. The
+                # backoff keeps growing, so it keeps trying, more slowly,
+                # until the dongle is back.
+                down.bad(f"printed no sweep for {silent_s:.0f} s; restarting it")
             elif live.is_set():
                 # It worked for a while, then stopped: worth a line each time.
                 logger.warning("%s ended with %s", command[0], proc.returncode)
@@ -256,9 +270,14 @@ async def run_sweeper(
         delay = min(delay * 2, BACKOFF_MAX_S)
 
 
-async def _prove(healthy_s: float, held: list[str], live: asyncio.Event, down: Condition) -> None:
-    """After `healthy_s`, log what the run printed so far and go live."""
+async def _prove(
+    healthy_s: float, held: list[str], live: asyncio.Event, down: Condition, swept: asyncio.Event
+) -> None:
+    """Once the run has lasted `healthy_s` and sent a sweep, log what it
+    printed so far and go live. Running alone is not working: a silent
+    rtl_power is not sweeping."""
     await asyncio.sleep(healthy_s)
+    await swept.wait()
     for text in held:
         logger.info("rtl_power: %s", text)
     held.clear()
@@ -266,31 +285,51 @@ async def _prove(healthy_s: float, held: list[str], live: asyncio.Event, down: C
     down.ok("sweeping again")
 
 
-async def _relay(stream: asyncio.StreamReader, broadcast: Broadcaster, repeat_limit: int) -> bool:
-    """Pass rtl_power's lines on. True when it stopped because it repeats itself.
+async def _relay(
+    stream: asyncio.StreamReader,
+    broadcast: Broadcaster,
+    repeat_limit: int,
+    silent_s: float,
+    swept: asyncio.Event | None = None,
+) -> str | None:
+    """Pass rtl_power's lines on, until it ends or stops making sense.
 
-    A sweep is the lines that share a date and time. Two sweeps are the
+    Returns "repeats" when it sends the same sweep `repeat_limit` times,
+    "silent" when it sends no sweep line for `silent_s`, and None when
+    it ends. A sweep is the lines that share a date and time; two are the
     same when every line is the same after the date and time.
     """
     key: bytes | None = None
     sweep: list[bytes] = []
     last: list[bytes] | None = None
     repeats = 0
-    while line := await stream.readline():
+    loop = asyncio.get_running_loop()
+    heard = loop.time()
+    while True:
+        try:
+            line = await asyncio.wait_for(
+                stream.readline(), max(0.0, heard + silent_s - loop.time())
+            )
+        except TimeoutError:
+            return "silent"
+        if not line:
+            return None
         broadcast.send(line)
         parts = line.split(b",", 2)
         if len(parts) < 3 or line.startswith(b"#"):
             continue
+        heard = loop.time()
+        if swept is not None:
+            swept.set()
         stamp, rest = parts[0] + b"," + parts[1], parts[2]
         if stamp != key:
             if sweep:
                 repeats = repeats + 1 if sweep == last else 0
                 last = sweep
                 if repeat_limit and repeats >= repeat_limit:
-                    return True
+                    return "repeats"
             key, sweep = stamp, []
         sweep.append(rest.strip())
-    return False
 
 
 async def _log_lines(stream: asyncio.StreamReader, held: list[str], live: asyncio.Event) -> None:

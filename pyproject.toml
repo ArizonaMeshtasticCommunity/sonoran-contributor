@@ -1,6 +1,6 @@
 [project]
 name = "rf-agent"
-version = "0.4.1"
+version = "0.4.2"
 description = "Reads the decoders beside a member's SDR and publishes what they hear to the community broker."
 readme = "README.md"
 requires-python = ">=3.13"

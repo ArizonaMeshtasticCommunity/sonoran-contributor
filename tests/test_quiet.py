@@ -144,7 +144,11 @@ async def test_rtl_power_that_recovers_says_so_once(caplog):
         + "open(p, 'w').write(str(n + 1))\n"
         + "print('usb_open error -4', file=sys.stderr)\n"
         + "if n < 3: sys.exit(1)\n"
-        + "time.sleep(30)\n"
+        # Recovered: it sweeps, and each sweep differs a little.
+        + "for i in range(600):\n"
+        + "    print(f'2026-10-03, 16:{i // 12:02d}:{i % 12 * 5:02d}, 902000000, 903953125,"
+        + " 48828.12, 3000, -{30 + i % 7}.1', flush=True)\n"
+        + "    time.sleep(0.01)\n"
     )
     import tempfile
 
@@ -312,3 +316,31 @@ async def test_rf_sweep_leaves_a_working_rtl_power_alone(tmp_path):
     stop.set()
     await task
     assert starts.read_text() == "x", "never restarted"
+
+
+async def test_rf_sweep_restarts_rtl_power_that_prints_nothing(caplog, tmp_path):
+    """2026-10-03: restarted with the dongle gone, rtl_power sat and printed
+    nothing. It is restarted, and keeps being tried, more slowly, until the
+    dongle is back. Running alone is never reported as sweeping."""
+    starts = tmp_path / "starts"
+    script = f"open({str(starts)!r}, 'a').write('x')\nimport time\ntime.sleep(60)\n"
+    stop = asyncio.Event()
+    with caplog.at_level(logging.INFO):
+        task = asyncio.create_task(
+            run_sweeper(
+                [sys.executable, "-c", script],
+                Broadcaster(b""),
+                stop,
+                healthy_s=0.05,
+                first_delay=0.01,
+                silent_s=0.3,
+            )
+        )
+        await asyncio.sleep(2.0)
+        stop.set()
+        await task
+    assert len(starts.read_text()) >= 3, "tried again, and again"
+    logged = lines(caplog, logging.INFO, "rf_")
+    assert not any("sweeping again" in m for m in logged), logged
+    warnings = lines(caplog, logging.WARNING, "rf_")
+    assert len(warnings) == 1 and "printed no sweep" in warnings[0], warnings
