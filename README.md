@@ -225,9 +225,17 @@ A dongle that is unplugged or stalls does not make `rtl_power` exit: it
 prints its last sweep over and over, and never opens the dongle again.
 The agent drops a sweep exactly the same as the one before it and sends
 no minute that holds only repeats, so the map shows a gap, not a flat,
-quiet band. After about a minute of repeats, `rf-sweep` restarts
-`rtl_power` itself, so a dongle plugged back in is found again with no
-one restarting anything.
+quiet band. After about a minute of repeats, or two minutes with no
+sweep at all, `rf-sweep` restarts `rtl_power` itself. It keeps trying,
+more slowly each time, until the dongle is back, so a dongle plugged
+back in is found again with no one restarting anything.
+
+That needs the USB bus as a **volume** with a device rule, as below, not
+as `devices:`. `devices:` copies the USB device nodes once, when the
+container starts. A dongle plugged in later gets a new node, which the
+container never sees: only a container restart would find it. `189` is
+the Linux device number of USB devices; the rule lets the container open
+them, including ones plugged in after it started.
 
 ```yaml
 services:
@@ -238,8 +246,10 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-    devices:
+    volumes:
       - /dev/bus/usb:/dev/bus/usb
+    device_cgroup_rules:
+      - "c 189:* rmw"
     environment:
       SWEEP_SERIAL: SWEEP915
       SWEEP_GAIN_DB: "32.8"
