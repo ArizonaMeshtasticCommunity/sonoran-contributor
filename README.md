@@ -184,6 +184,12 @@ agent condenses each minute into one message per station: for each
 often the bin stood more than 6 dB above its own median. That last
 number is the one that says "something keeps sitting on LongFast".
 
+A dongle that stalls can keep printing the same sweep. The agent drops
+a sweep that is exactly the same as the one before it, sends no minute
+that holds only repeats, and logs `the dongle may have stalled`. The map
+then shows a gap, not a flat, quiet band. Restart `rf-sweep` or replug
+the dongle when you see that line.
+
 ```yaml
 services:
   rf-sweep:

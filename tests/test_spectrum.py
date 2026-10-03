@@ -4,7 +4,7 @@ A known carrier must land in the right bin, and a bursty one must raise
 its `busy` (design 10).
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 
@@ -133,3 +133,58 @@ def test_parse_range():
     for bad in ("902:928", "928000000:902000000:50000", "902000000:928000000:0", "0:6000000000:1"):
         with pytest.raises(ValueError):
             parse_range(bad)
+
+
+def frozen_lines(first_minute: int, minutes: int) -> list[str]:
+    """The capture's last sweep, stamped again every 5 s: a stalled dongle.
+
+    rtl_power keeps printing, with a new time on each sweep, and the
+    same level in every bin.
+    """
+    lines = capture_lines()
+    header = [line for line in lines if line.startswith("#")]
+    data = [line for line in lines if not line.startswith("#")]
+    last_key = data[-1].split(",")[:2]
+    sweep = [line for line in data if line.split(",")[:2] == last_key]
+    out = list(header)
+    base = datetime.fromisoformat("2026-09-22T18:00:00+00:00").timestamp() + first_minute * 60
+    for i in range(minutes * 12):
+        stamp = datetime.fromtimestamp(base + i * 5, tz=UTC)
+        date, clock = stamp.strftime("%Y-%m-%d"), stamp.strftime("%H:%M:%S")
+        out += [", ".join([date, clock, *line.split(",")[2:]]) for line in sweep]
+    return out
+
+
+def test_a_receiver_that_repeats_itself_sends_no_minutes(caplog):
+    """A frozen dongle is a gap on the map, not a quiet band."""
+    summary = SpectrumSummary("test-site")
+    with caplog.at_level("WARNING"):
+        messages = replay(summary, frozen_lines(0, 3))
+    # The first sweep is real, so its minute goes out with that one
+    # sweep. Every minute after it held only repeats.
+    assert [m["sweeps"] for m in messages] == [1]
+    assert summary.frozen_minutes == 2
+    assert sum("may have stalled" in r.message for r in caplog.records) == 1, "warn once"
+
+
+def test_fresh_sweeps_after_a_freeze_are_sent_again(caplog):
+    summary = SpectrumSummary("test-site")
+    frozen = frozen_lines(0, 2)
+    # The real capture an hour later, so its minutes come after the freeze.
+    live = [line.replace(", 18:", ", 19:") for line in capture_lines() if not line.startswith("#")]
+    with caplog.at_level("INFO"):
+        out = replay(summary, frozen + live)
+        # replay ends its last minute near 18:03; end 19:01 too.
+        out += summary.tick(when(live[-1]) + 120)
+    fresh = [m for m in out if m["t"].startswith("2026-09-22T19:")]
+    assert [m["sweeps"] for m in fresh] == [12, 12]
+    assert summary.frozen_minutes == 0
+    assert any("fresh sweeps again" in r.message for r in caplog.records)
+
+
+def test_a_live_capture_has_no_repeats():
+    """The control: real sweeps are never dropped as repeats."""
+    summary = SpectrumSummary("test-site")
+    messages = replay(summary, capture_lines())
+    assert [m["sweeps"] for m in messages] == [12, 12]
+    assert summary.frozen_minutes == 0
