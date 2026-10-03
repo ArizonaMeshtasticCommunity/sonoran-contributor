@@ -61,6 +61,13 @@ check this, not only the examples.
   `radiosonde_auto_rx` and `rtl_433`. Those are read from a UDP socket,
   which serves nothing and accepts no connection, and every datagram is
   treated as untrusted input. Nothing else binds a port.
+- **The only other outgoing connection is the member's own alert
+  webhook**, and only when they set `ALERT_WEBHOOK`. It carries
+  conditions (a decoder down, a stalled sweep), never what was heard.
+  The URL holds a token: never log it.
+- **Log a failure when it starts or changes, not on every retry**
+  (`quiet.Condition`). A station runs for months, often logging to an
+  SD card, and a week of retries must not fill it.
 - **Publish to the station's own topic only**, `rf/v1/<station>/...`. The
   broker enforces it; the agent must not rely on that. With `SOURCE_ID`,
   the heartbeat goes to `rf/v1/<station>/status/<source>`.

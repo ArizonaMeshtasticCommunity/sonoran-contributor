@@ -85,6 +85,9 @@ class Config:
     source_id: str | None = None
     # `rtl_433` models a member has named. Empty means none pass.
     ism_allow: frozenset[str] = frozenset()
+    # The member's own Discord webhook for alerts, or None. It holds a
+    # token: never log it, and keep it out of repr.
+    alert_webhook: str | None = field(default=None, repr=False)
 
     @property
     def station(self) -> tuple[float, float] | None:
@@ -288,6 +291,13 @@ def load(env: Mapping[str, str]) -> Config:
                 "needed to place what ism hears"
             )
 
+    alert_webhook = env.get("ALERT_WEBHOOK", "").strip() or None
+    if alert_webhook is not None:
+        hook = urlsplit(alert_webhook)
+        # The message never repeats the value: it holds a token.
+        if hook.scheme != "https" or not hook.hostname:
+            errors.append("ALERT_WEBHOOK must be an https:// webhook URL")
+
     log_level = env.get("LOG_LEVEL", "").strip().upper() or "INFO"
     if log_level not in ("DEBUG", "INFO", "WARNING", "ERROR"):
         errors.append("LOG_LEVEL must be DEBUG, INFO, WARNING or ERROR")
@@ -310,4 +320,5 @@ def load(env: Mapping[str, str]) -> Config:
         mesh_node=mesh_node,
         source_id=source_id,
         ism_allow=ism_allow,
+        alert_webhook=alert_webhook,
     )

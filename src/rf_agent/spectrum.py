@@ -38,12 +38,16 @@ from typing import Any
 
 from rf_agent.dump978 import LineSplitter
 from rf_agent.messages import VERSION, Observation, timestamp
+from rf_agent.quiet import Condition
 
 logger = logging.getLogger(__name__)
 
 HEADER = "# rf-sweep"
 MAX_BINS = 4096
 BUSY_DB = 6.0
+# Minutes in a row with no sweep at all before it is reported: rf-sweep
+# is up but rtl_power is not sweeping, most often an unplugged dongle.
+EMPTY_MINUTES = 3
 LEVEL_MIN, LEVEL_MAX = -2000, 1000  # tenths of a dB, as the contract allows
 
 
@@ -114,6 +118,9 @@ class SpectrumSummary:
         self._repeats = 0
         # Minutes not sent in a row because every sweep was a repeat.
         self.frozen_minutes = 0
+        # Minutes in a row with no sweep at all.
+        self.empty_minutes = 0
+        self.health = Condition(logger, "spectrum")
 
     def feed(self, data: bytes, now: float) -> list[Observation]:
         """Handle bytes from `rf-sweep`. Spectrum has no observations: see `tick`."""
@@ -209,22 +216,29 @@ class SpectrumSummary:
         self._repeats = 0
 
     def _note_repeats(self) -> None:
-        """Log when the receiver starts and stops repeating itself."""
+        """Report a receiver that repeats itself, or sends nothing, and its return."""
         if self._repeats and not self._sweeps:
-            if not self.frozen_minutes:
-                logger.warning(
-                    "spectrum: rf-sweep sent the same sweep %d times and nothing new; "
-                    "the dongle may have stalled. Minutes are not sent until it changes",
-                    self._repeats + 1,
-                )
             self.frozen_minutes += 1
-        elif self._sweeps and self.frozen_minutes:
-            logger.info(
-                "spectrum: fresh sweeps again after %d minutes not sent", self.frozen_minutes
+            self.health.bad(
+                "rf-sweep sends the same sweep over and over; the dongle may have stalled. "
+                "Minutes are not sent until it changes"
             )
-            self.frozen_minutes = 0
-        elif self._repeats:
-            logger.debug("spectrum: %d repeated sweeps dropped this minute", self._repeats)
+        elif not self._sweeps:
+            self.empty_minutes += 1
+            if self.empty_minutes >= EMPTY_MINUTES:
+                self.health.bad(
+                    f"no sweeps from rf-sweep for {EMPTY_MINUTES} minutes or more; "
+                    "is the dongle plugged in?"
+                )
+        else:
+            if self.health.failing:
+                self.health.ok(
+                    f"fresh sweeps again after {self.frozen_minutes + self.empty_minutes} "
+                    "minutes not sent"
+                )
+            self.frozen_minutes = self.empty_minutes = 0
+            if self._repeats:
+                logger.debug("spectrum: %d repeated sweeps dropped this minute", self._repeats)
 
     def _close(self, minute: int) -> dict[str, Any] | None:
         self._end_sweep()

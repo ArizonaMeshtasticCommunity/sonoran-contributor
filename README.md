@@ -136,6 +136,7 @@ Every setting is an environment variable.
 | `ADSB_INTERVAL_S` | Seconds between two points for one aircraft. At least 1. | `20` |
 | `LOG_LEVEL` | `DEBUG`, `INFO`, `WARNING` or `ERROR`. | `INFO` |
 | `ISM_ALLOW` | `rtl_433` model names to pass, comma separated, case ignored. Empty means none pass. | empty |
+| `ALERT_WEBHOOK` | Your own Discord webhook, for alerts about this station. See [alerts](#-alerts). | — |
 | `SITE_MESH_NODE` | The Meshtastic node at this site, such as `!a1b2c3d4`, if any, so its own bursts are not read as interference. | — |
 
 `rf-sweep` has settings of its own; see [the 900 MHz band](#-the-900-mhz-band).
@@ -185,6 +186,25 @@ ADS-C (relayed from the internet) are left out. From Beast, TIS-B and
 ADS-R rebroadcasts are left out; UAT aircraft come from `uat=`.
 Kinds of a later phase are accepted in `SOURCES` and ignored, with a
 warning, until their phase is built.
+
+## 🔔 Alerts
+
+Set `ALERT_WEBHOOK` to a Discord webhook (channel → Edit Channel →
+Integrations → Webhooks → New Webhook → Copy Webhook URL), and the agent
+posts there when something about your station changes:
+
+- a decoder stops answering, or answers again;
+- the broker is out of reach, or back;
+- the 900 MHz sweep stalls (the same sweep over and over), or sends
+  nothing for 3 minutes, which most often means the dongle is unplugged;
+  and when fresh sweeps return.
+
+One message when a problem starts or changes, and one when it ends.
+Never one per retry. Alerts that come close together arrive as one
+message. The URL holds a token: keep it out of anything you share. The
+agent never logs it.
+
+A Pi that loses power or its network cannot send its own alert.
 
 ## 📶 The 900 MHz band
 

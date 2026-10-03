@@ -19,6 +19,7 @@ import time
 
 from rf_agent import __version__
 from rf_agent.aircraft_json import AircraftJson
+from rf_agent.alerts import Alerter
 from rf_agent.aprs import Direwolf
 from rf_agent.beast import Tracker
 from rf_agent.config import Config, ConfigError, Source, load
@@ -28,6 +29,7 @@ from rf_agent.ism import Rtl433
 from rf_agent.messages import Counts, Observation
 from rf_agent.publisher import Outbox, Publisher
 from rf_agent.publisher import run as run_publisher
+from rf_agent.quiet import set_notifier
 from rf_agent.sonde import AutoRx
 from rf_agent.sources import Handler, poll, read_datagrams, read_stream
 from rf_agent.spectrum import SpectrumSummary
@@ -122,8 +124,17 @@ async def main(config: Config) -> None:
     for kind in config.ignored_kinds:
         logger.warning("SOURCES: kind %r is not built yet; it is ignored", kind)
 
+    alerter = None
+    if config.alert_webhook:
+        label = config.station_id + (f"/{config.source_id}" if config.source_id else "")
+        alerter = Alerter(config.alert_webhook, label)
+        set_notifier(alerter.add)
+        logger.info("alerts go to the Discord webhook in ALERT_WEBHOOK")
+
     readers = [reader_task(source, config, pipeline) for source in config.sources]
     readers.append(asyncio.create_task(_expire_loop(pipeline), name="expire"))
+    if alerter is not None:
+        readers.append(asyncio.create_task(alerter.run(), name="alerts"))
     # Set only once the last points are queued, so the final flush has them.
     drained = asyncio.Event()
     sender = asyncio.create_task(run_publisher(publisher, drained), name="publisher")
@@ -139,6 +150,11 @@ async def main(config: Config) -> None:
         await asyncio.wait_for(sender, SHUTDOWN_S)
     if pipeline.outbox:
         logger.warning("stopped with %d points unsent", len(pipeline.outbox))
+    if alerter is not None:
+        # One last try, so an alert raised just before stopping is not lost.
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(alerter.flush(), SHUTDOWN_S)
+        set_notifier(None)
 
 
 def run() -> None:
