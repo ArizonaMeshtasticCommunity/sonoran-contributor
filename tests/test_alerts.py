@@ -166,3 +166,51 @@ def test_post_webhook_against_a_server_that_answers_like_discord():
     finally:
         server.shutdown()
     assert got[0] == {"content": "hi"}
+
+
+def test_an_error_that_flaps_between_two_texts_is_not_news_each_time(sent, caplog):
+    """Refused, then no answer, then refused: before, every switch was logged."""
+    clock = Clock()
+    down = Condition(logging.getLogger("t.flap"), "adsb", clock=clock)
+    with caplog.at_level(logging.WARNING, logger="t.flap"):
+        for i in range(200):
+            down.bad("Connection refused" if i % 2 else "no answer from readsb:30005")
+            clock.now += 30
+    assert len(caplog.records) == 2, [r.getMessage() for r in caplog.records]
+    assert sent == [
+        "🔴 adsb: no answer from readsb:30005",
+        "🔴 adsb: Connection refused",
+    ]
+
+
+def test_a_short_blip_sends_nothing_to_discord(sent, caplog):
+    """A decoder restarting for ten seconds is in the log, not in Discord."""
+    clock = Clock()
+    down = Condition(logging.getLogger("t.blip"), "uat", clock=clock)
+    with caplog.at_level(logging.INFO, logger="t.blip"):
+        down.bad("Connection refused")
+        clock.now += 10
+        down.bad("Connection refused")
+        down.ok("reading again")
+    assert sent == []
+    assert [r.levelname for r in caplog.records] == ["WARNING", "INFO"], "the log still has it"
+
+
+def test_an_alert_waits_two_minutes_then_its_recovery_follows(sent):
+    clock = Clock()
+    down = Condition(logging.getLogger("t"), "broker", clock=clock)
+    down.bad("Connection refused")
+    clock.now += 60
+    down.bad("Connection refused")
+    assert sent == []
+    clock.now += 60
+    down.bad("Connection refused")
+    assert sent == ["🔴 broker: Connection refused"]
+    clock.now += 600
+    down.ok("connected again")
+    assert sent[-1] == "✅ broker: connected again after 12 min"
+    # A new outage starts afresh: its errors are news again.
+    down.bad("Connection refused")
+    clock.now += 120
+    down.bad("Connection refused")
+    assert sent[-1] == "🔴 broker: Connection refused" and len(sent) == 3

@@ -200,8 +200,12 @@ posts there when something about your station changes:
   and when fresh sweeps return.
 
 One message when a problem starts or changes, and one when it ends.
-Never one per retry. Alerts that come close together arrive as one
-message. The URL holds a token: keep it out of anything you share. The
+Never one per retry. A decoder or the broker must be down for 2 minutes
+before you hear about it, so a quick restart sends nothing, and you get
+an "ended" message only for a problem you were told about. An error
+that keeps switching between two forms is one problem, not news each
+time. Alerts that come close together arrive as one message. The log
+still records everything, as it happens. The URL holds a token: keep it out of anything you share. The
 agent never logs it.
 
 A Pi that loses power or its network cannot send its own alert.

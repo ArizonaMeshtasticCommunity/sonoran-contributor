@@ -120,7 +120,9 @@ class SpectrumSummary:
         self.frozen_minutes = 0
         # Minutes in a row with no sweep at all.
         self.empty_minutes = 0
-        self.health = Condition(logger, "spectrum")
+        # Each check already waits whole minutes before it reports, so
+        # its alert is not delayed again.
+        self.health = Condition(logger, "spectrum", alert_after_s=0)
 
     def feed(self, data: bytes, now: float) -> list[Observation]:
         """Handle bytes from `rf-sweep`. Spectrum has no observations: see `tick`."""
