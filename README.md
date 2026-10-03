@@ -74,6 +74,10 @@ services:
   rf-agent:
     image: ghcr.io/arizonameshtasticcommunity/rf-agent:1
     restart: unless-stopped
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       STATION_ID: tempe-roof
       SOURCE_ID: adsb-pi
@@ -104,6 +108,14 @@ The agent logs a heartbeat line every minute: how many positions it
 heard, sent and thinned. A decoder or broker that goes away is retried,
 up to a minute apart; the agent never needs a restart for it. A setting
 that is wrong stops it at start, with every problem named.
+
+A failure that lasts is logged when it starts or changes, once an hour
+while it continues, and once when it ends. It is not logged on every
+retry, so an unplugged dongle or a decoder that is down for a week does
+not fill the disk. The `logging:` lines above cap what Docker keeps, at
+30 MB per container: Docker's default keeps everything. If your Docker
+logs to journald or syslog instead, cap that there, such as
+`SystemMaxUse=` in `journald.conf`.
 
 > [!NOTE]
 > dump978-fa serves raw frames on 30978 and decoded JSON on 30979. The
@@ -195,6 +207,10 @@ services:
   rf-sweep:
     image: ghcr.io/arizonameshtasticcommunity/rf-sweep:main
     restart: unless-stopped
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
     devices:
       - /dev/bus/usb:/dev/bus/usb
     environment:
@@ -203,6 +219,10 @@ services:
   rf-agent:
     image: ghcr.io/arizonameshtasticcommunity/rf-agent:main
     restart: unless-stopped
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       STATION_ID: tempe-roof
       BROKER_URL: mqtts://broker.example:8883

@@ -5,6 +5,10 @@ agent restarted (design 3.3). Each source runs in its own loop. It
 reads, hands the bytes to its parser, and on any failure waits and
 connects again, up to a minute apart. A parser error is logged and the
 bytes are skipped; it never ends the loop.
+
+A failure is logged when it starts or changes, and then once an hour,
+never on every retry (`quiet.Condition`). A station can be down for
+days, and its log must not fill the disk meanwhile.
 """
 
 from __future__ import annotations
@@ -17,6 +21,7 @@ from collections.abc import Callable
 from urllib.parse import urlsplit
 
 from rf_agent.messages import Observation
+from rf_agent.quiet import REMIND_S, Condition
 
 logger = logging.getLogger(__name__)
 
@@ -46,9 +51,10 @@ class Backoff:
         return delay
 
 
-# When each source last logged a parse failure. One a minute is enough
-# to see a source pointed at the wrong port without flooding the log.
-_last_complaint: dict[str, float] = {}
+# Parse failures per source: when the last was logged, and how many
+# since. The first is logged at once, then a count once an hour, which is
+# enough to see a source pointed at the wrong port without filling a disk.
+_complaints: dict[str, tuple[float, int]] = {}
 
 
 def _handle(name: str, handler: Handler, data: bytes, sink: Sink) -> None:
@@ -58,9 +64,14 @@ def _handle(name: str, handler: Handler, data: bytes, sink: Sink) -> None:
             sink(points)
     except Exception as exc:
         now = time.monotonic()
-        if now - _last_complaint.get(name, -60.0) >= 60.0:
-            _last_complaint[name] = now
-            logger.warning("%s: skipped input the parser could not read: %s", name, exc)
+        last, skipped = _complaints.get(name, (-REMIND_S, 0))
+        skipped += 1
+        if now - last >= REMIND_S:
+            more = f" ({skipped} inputs skipped in the last hour)" if skipped > 1 else ""
+            logger.warning("%s: skipped input the parser could not read: %s%s", name, exc, more)
+            _complaints[name] = (now, 0)
+        else:
+            _complaints[name] = (last, skipped)
 
 
 async def read_stream(
@@ -72,33 +83,55 @@ async def read_stream(
     idle_s: float = IDLE_S,
     backoff: Backoff | None = None,
 ) -> None:
-    """Read a decoder's TCP output forever."""
+    """Read a decoder's TCP output forever.
+
+    A connection counts as working once data arrives. Only then is the
+    backoff reset and a recovery logged, so a decoder that accepts and
+    at once closes is retried with backoff, not in a tight loop.
+    """
     backoff = backoff or Backoff()
+    down = Condition(logger, name)
+    connected_once = False
     while True:
         writer = None
         try:
             reader, writer = await asyncio.wait_for(
                 asyncio.open_connection(host, port), CONNECT_TIMEOUT_S
             )
-            logger.info("%s: connected", name)
-            backoff.reset()
+            if not connected_once and not down.failing:
+                logger.info("%s: connected", name)
+            connected_once = True
+            got_data = False
             while True:
                 data = await asyncio.wait_for(reader.read(65536), idle_s)
                 if not data:
-                    logger.warning("%s: the decoder closed the connection", name)
+                    if got_data:
+                        logger.info("%s: the decoder closed the connection", name)
+                    else:
+                        down.bad("the decoder closed the connection before sending anything")
                     break
+                if not got_data:
+                    got_data = True
+                    backoff.reset()
+                    down.ok("reading again")
                 _handle(name, handler, data, sink)
         except TimeoutError:
-            logger.warning("%s: no answer, or nothing heard for a while; reconnecting", name)
+            if writer is None:
+                down.bad(f"no answer from {host}:{port}")
+            else:
+                # A quiet sky at night is normal. Reconnect, quietly.
+                logger.debug("%s: nothing heard for %.0f s; reconnecting", name, idle_s)
         except OSError as exc:
-            logger.warning("%s: %s", name, exc)
-        except Exception:
-            logger.exception("%s: reader failed", name)
+            down.bad(str(exc))
+        except Exception as exc:
+            if not down.failing:
+                logger.exception("%s: reader failed", name)
+            down.bad(f"reader failed: {exc}")
         finally:
             if writer is not None:
                 writer.close()
         delay = backoff.next()
-        logger.info("%s: retry in %.0f s", name, delay)
+        logger.debug("%s: retry in %.0f s", name, delay)
         await asyncio.sleep(delay)
 
 
@@ -120,6 +153,7 @@ async def read_datagrams(
     """
     backoff = backoff or Backoff()
     loop = asyncio.get_running_loop()
+    down = Condition(logger, name)
 
     class _Receiver(asyncio.DatagramProtocol):
         def datagram_received(self, data: bytes, addr: object) -> None:
@@ -132,20 +166,25 @@ async def read_datagrams(
         transport = None
         try:
             transport, _ = await loop.create_datagram_endpoint(_Receiver, local_addr=(host, port))
-            logger.info("%s: listening for datagrams on %s:%d", name, host, port)
+            if down.failing:
+                down.ok(f"listening on {host}:{port} again")
+            else:
+                logger.info("%s: listening for datagrams on %s:%d", name, host, port)
             backoff.reset()
             # Nothing to wait for: the protocol is called as datagrams
             # arrive. Sleep until the socket fails or the task is cancelled.
             await asyncio.Event().wait()
         except OSError as exc:
-            logger.warning("%s: %s", name, exc)
-        except Exception:
-            logger.exception("%s: receiver failed", name)
+            down.bad(str(exc))
+        except Exception as exc:
+            if not down.failing:
+                logger.exception("%s: receiver failed", name)
+            down.bad(f"receiver failed: {exc}")
         finally:
             if transport is not None:
                 transport.close()
         delay = backoff.next()
-        logger.info("%s: retry in %.0f s", name, delay)
+        logger.debug("%s: retry in %.0f s", name, delay)
         await asyncio.sleep(delay)
 
 
@@ -170,19 +209,16 @@ async def poll(
 ) -> None:
     """Read `aircraft.json` about once a second, forever."""
     backoff = backoff or Backoff()
-    failing = False
+    down = Condition(logger, name)
     while True:
         try:
             data = await asyncio.to_thread(fetcher, url)
         except Exception as exc:
-            if not failing:
-                logger.warning("%s: %s", name, exc)
-            failing = True
+            down.bad(str(exc))
             await asyncio.sleep(backoff.next())
             continue
-        if failing:
-            logger.info("%s: reading again", name)
-            failing = False
+        if down.failing:
+            down.ok("reading again")
             backoff.reset()
         _handle(name, handler, data, sink)
         await asyncio.sleep(every_s)
