@@ -47,7 +47,11 @@ on the RF tab. It never holds a Discord id.
 - Only the owner or an operator may change a location. The bot decides
   who is an operator, from a Discord role.
 - A revocation deletes the login and then disconnects the Pi, so it
-  cannot reconnect. A rotation changes the password and disconnects
+  cannot reconnect. It also clears the Pi's retained heartbeat, which
+  Sonoran would otherwise read again on reconnect and list the Pi again.
+  Deleting a location clears every heartbeat it had, the one of a login
+  made by hand included. To remove what the station already sent, run
+  `sonoran-rf-purge` in Sonoran. A rotation changes the password and disconnects
   the Pi.
 - A member may own `MAX_LOCATIONS_PER_OWNER` locations, with up to
   `MAX_SOURCES_PER_LOCATION` sources each, and may mint or rotate

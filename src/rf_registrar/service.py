@@ -254,6 +254,8 @@ class Registrar:
         self.store.remove_location(location.id)
         self.store.log(actor.id, "delete", location.id, at=self.clock())
         await self.publish(location.id)
+        # And the heartbeat of a login made by hand, before the registrar.
+        await self._clear(f"rf/v1/{location.id}/status")
 
     # --- sources ------------------------------------------------------
 
@@ -331,6 +333,17 @@ class Registrar:
             await self.broker.delete_rules(source.username)
         except BrokerError as exc:
             raise Unavailable(f"the broker refused: {exc}") from exc
+        # The Pi's last heartbeat stays on the broker as a retained message,
+        # and Sonoran reads it again when it reconnects. Clear it, so a
+        # revoked Pi is not listed again after an ingest restart.
+        await self._clear(f"rf/v1/{source.location}/status/{source.label}")
+
+    async def _clear(self, topic: str) -> None:
+        """Remove a retained message. A failure is logged, not raised."""
+        try:
+            await self.broker.publish_retained(topic, b"")
+        except BrokerError:
+            logger.exception("could not clear the retained message on %s", topic)
 
     @staticmethod
     async def _quietly(call: Any) -> None:
