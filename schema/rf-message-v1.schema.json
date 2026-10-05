@@ -86,6 +86,135 @@
       "title": "Counts",
       "type": "object"
     },
+    "Custom": {
+      "description": "A batch from a member's own mod, on `rf/v1/<station>/custom` (#324).\n\n`mod` names the program within the station. Sonoran stores each point\nunder the station and the mod, so a mod can never post as another\nstation, another mod, or a built-in kind. It gets no more trust than\na built-in decoder, and is shown as unverified.",
+      "properties": {
+        "kind": {
+          "const": "custom",
+          "title": "Kind",
+          "type": "string"
+        },
+        "mod": {
+          "pattern": "^[a-z0-9][a-z0-9-]{0,15}$",
+          "title": "Mod",
+          "type": "string"
+        },
+        "points": {
+          "items": {
+            "$ref": "#/$defs/CustomPoint"
+          },
+          "maxItems": 100,
+          "title": "Points",
+          "type": "array"
+        },
+        "sent": {
+          "format": "date-time",
+          "title": "Sent",
+          "type": "string"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z0-9][a-z0-9-]{0,15}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source"
+        },
+        "station": {
+          "pattern": "^[a-z0-9-]{3,32}$",
+          "title": "Station",
+          "type": "string"
+        },
+        "v": {
+          "const": 1,
+          "title": "V",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "v",
+        "station",
+        "kind",
+        "mod",
+        "sent",
+        "points"
+      ],
+      "title": "Custom",
+      "type": "object"
+    },
+    "CustomPoint": {
+      "description": "One thing a member's mod heard (#324, section 6).\n\nA position is optional. With `heard_here`, the point is drawn at the\nstation's own rounded position, and any position it sends is not\nused. With neither, it is listed in the table and never drawn.",
+      "properties": {
+        "heard_here": {
+          "default": false,
+          "title": "Heard Here",
+          "type": "boolean"
+        },
+        "id": {
+          "maxLength": 32,
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "lat": {
+          "anyOf": [
+            {
+              "maximum": 90,
+              "minimum": -90,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Lat"
+        },
+        "lon": {
+          "anyOf": [
+            {
+              "maximum": 180,
+              "minimum": -180,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Lon"
+        },
+        "meta": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Meta"
+        },
+        "t": {
+          "format": "date-time",
+          "title": "T",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "t"
+      ],
+      "title": "CustomPoint",
+      "type": "object"
+    },
     "Observation": {
       "description": "One thing heard, at one moment, by one station.",
       "properties": {
@@ -317,7 +446,7 @@
       "type": "object"
     },
     "Spectrum": {
-      "description": "One minute of the 900 MHz band from one station, on `rf/v1/<station>/spectrum`.\n\nBin `i` covers `f_start_hz + i * bin_hz` to the next bin. Per bin: the\nmedian, the 95th percentile and the peak level over the minute's\nsweeps, and `busy`, the share of sweeps in percent in which the bin\nstood more than 6 dB above its own median. The four arrays have one\nentry per bin. Levels compare one station with itself over time,\nnever two stations (design 3.5).",
+      "description": "One minute of one swept range from one station, on `rf/v1/<station>/spectrum`.\n\nA station may sweep any range it chooses, and more than one: with\ntwo dongles, or one that takes turns (#324). Each range sends its\nown minutes. A range is known by its source, `f_start_hz`, `bin_hz`\nand number of bins; `name` is an optional label the station gives it.\n\nBin `i` covers `f_start_hz + i * bin_hz` to the next bin. Per bin: the\nmedian, the 95th percentile and the peak level over the minute's\nsweeps, and `busy`, the share of sweeps in percent in which the bin\nstood more than 6 dB above its own median. The four arrays have one\nentry per bin. Levels compare one station with itself over time,\nnever two stations (design 3.5).",
       "properties": {
         "bin_hz": {
           "maximum": 10000000,
@@ -359,6 +488,19 @@
           "const": "spectrum",
           "title": "Kind",
           "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z0-9][a-z0-9-]{0,15}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
         },
         "p50": {
           "items": {
@@ -583,6 +725,15 @@
           "title": "Station",
           "type": "string"
         },
+        "sweeps": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Sweep"
+          },
+          "maxItems": 8,
+          "title": "Sweeps",
+          "type": "array"
+        },
         "v": {
           "const": 1,
           "title": "V",
@@ -596,22 +747,161 @@
       ],
       "title": "Status",
       "type": "object"
+    },
+    "Sweep": {
+      "description": "What one sweeper of a station runs, as the station reports it (#324).\n\nThis is a claim, shown as \"reported by the station\". Nothing is ever\nrun from it, and it never changes how a station's data is trusted.\n`command` is the exact command line the sweeper runs, for a reader\nwho wants to repeat it. `dwell_s` is set when one dongle takes turns\nbetween ranges: it sweeps this range `dwell_s` seconds at a time.",
+      "properties": {
+        "bin_hz": {
+          "maximum": 10000000,
+          "minimum": 1,
+          "title": "Bin Hz",
+          "type": "integer"
+        },
+        "command": {
+          "anyOf": [
+            {
+              "maxLength": 512,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Command"
+        },
+        "dwell_s": {
+          "anyOf": [
+            {
+              "maximum": 86400,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dwell S"
+        },
+        "f_end_hz": {
+          "maximum": 6000000000,
+          "minimum": 0,
+          "title": "F End Hz",
+          "type": "integer"
+        },
+        "f_start_hz": {
+          "maximum": 6000000000,
+          "minimum": 0,
+          "title": "F Start Hz",
+          "type": "integer"
+        },
+        "gain_db": {
+          "maximum": 100,
+          "minimum": -10,
+          "title": "Gain Db",
+          "type": "number"
+        },
+        "interval_s": {
+          "anyOf": [
+            {
+              "maximum": 3600,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Interval S"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z0-9][a-z0-9-]{0,15}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "ppm": {
+          "anyOf": [
+            {
+              "maximum": 1000,
+              "minimum": -1000,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ppm"
+        },
+        "tool": {
+          "pattern": "^[a-z0-9_.-]{1,32}$",
+          "title": "Tool",
+          "type": "string"
+        },
+        "tool_version": {
+          "anyOf": [
+            {
+              "maxLength": 64,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tool Version"
+        }
+      },
+      "required": [
+        "tool",
+        "f_start_hz",
+        "f_end_hz",
+        "bin_hz",
+        "gain_db"
+      ],
+      "title": "Sweep",
+      "type": "object"
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "Published by rf-agent. Observations go to rf/v1/<station>/<kind>, the heartbeat to rf/v1/<station>/status/<source> (or rf/v1/<station>/status without a source), retained, and a minute of the 900 MHz band to rf/v1/<station>/spectrum. The registrar alone publishes the Registry to rf/v1/<station>/registry, retained. See docs/design/rf-map.md section 4. Generated from sonoran/rf/schema.py.",
+  "description": "Published by rf-agent. Observations go to rf/v1/<station>/<kind>, the heartbeat to rf/v1/<station>/status/<source> (or rf/v1/<station>/status without a source), retained, and a minute of a swept range to rf/v1/<station>/spectrum, and a member's mod's points to rf/v1/<station>/custom. The registrar alone publishes the Registry to rf/v1/<station>/registry, retained. See docs/design/rf-map.md section 4. Generated from sonoran/rf/schema.py.",
   "else": {
     "else": {
       "else": {
-        "$ref": "#/$defs/Status"
+        "else": {
+          "$ref": "#/$defs/Status"
+        },
+        "if": {
+          "required": [
+            "display_name"
+          ]
+        },
+        "then": {
+          "$ref": "#/$defs/Registry"
+        }
       },
       "if": {
+        "properties": {
+          "kind": {
+            "const": "custom"
+          }
+        },
         "required": [
-          "display_name"
+          "kind"
         ]
       },
       "then": {
-        "$ref": "#/$defs/Registry"
+        "$ref": "#/$defs/Custom"
       }
     },
     "if": {
