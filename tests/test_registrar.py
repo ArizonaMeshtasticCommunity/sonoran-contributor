@@ -420,3 +420,35 @@ async def test_a_transfer_respects_the_new_owners_limit(reg):
     with pytest.raises(Limited, match="new owner"):
         await reg.transfer("tempe-roof", "222", "Will", OWNER)
     await reg.transfer("tempe-roof", "222", "Will", OPERATOR)
+
+
+async def test_revoking_clears_the_pis_retained_heartbeat(reg, broker):
+    """Sonoran reads retained heartbeats again on reconnect. A revoked Pi's
+    must be gone, or it is listed again after every ingest restart."""
+    await reg.create("tempe-roof", "Tempe roof", OWNER)
+    await reg.mint("tempe-roof", "adsb-pi", OWNER)
+    broker.retained["rf/v1/tempe-roof/status/adsb-pi"] = b'{"v":1}'
+    await reg.revoke("tempe-roof", "adsb-pi", OWNER)
+    assert broker.retained["rf/v1/tempe-roof/status/adsb-pi"] == b""
+
+
+async def test_deleting_a_location_clears_every_heartbeat_and_the_registry(reg, broker):
+    await reg.create("tempe-roof", "Tempe roof", OWNER)
+    await reg.mint("tempe-roof", "adsb-pi", OWNER)
+    await reg.mint("tempe-roof", "sweeper", OWNER)
+    await reg.delete("tempe-roof", OWNER)
+    for topic in (
+        "rf/v1/tempe-roof/status/adsb-pi",
+        "rf/v1/tempe-roof/status/sweeper",
+        "rf/v1/tempe-roof/status",
+        "rf/v1/tempe-roof/registry",
+    ):
+        assert broker.retained[topic] == b"", topic
+
+
+async def test_a_heartbeat_that_cannot_be_cleared_does_not_undo_the_revoke(reg, broker):
+    await reg.create("tempe-roof", "Tempe roof", OWNER)
+    await reg.mint("tempe-roof", "adsb-pi", OWNER)
+    broker.fail.add("publish_retained")
+    await reg.revoke("tempe-roof", "adsb-pi", OWNER)
+    assert "rf-tempe-roof-adsb-pi" not in broker.users
