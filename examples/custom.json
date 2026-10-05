@@ -1,0 +1,12 @@
+{
+  "v": 1,
+  "station": "tempe-roof",
+  "source": "pi5",
+  "kind": "custom",
+  "mod": "lightning",
+  "sent": "2026-10-05T18:00:02Z",
+  "points": [
+    { "id": "strike-1", "t": "2026-10-05T18:00:00Z", "heard_here": true, "meta": { "distance_km": 12, "energy": 3150 } },
+    { "id": "car-7", "t": "2026-10-05T18:00:01Z", "lat": 33.42, "lon": -111.94 }
+  ]
+}

@@ -16,6 +16,7 @@ import os
 import signal
 import sys
 import time
+from typing import Any
 
 from rf_agent import __version__
 from rf_agent.aircraft_json import AircraftJson
@@ -23,6 +24,7 @@ from rf_agent.alerts import Alerter
 from rf_agent.aprs import Direwolf
 from rf_agent.beast import Tracker
 from rf_agent.config import Config, ConfigError, Source, load
+from rf_agent.custom import CustomInput
 from rf_agent.dump978 import Dump978
 from rf_agent.geo import round_position
 from rf_agent.ism import Rtl433
@@ -49,6 +51,7 @@ class Pipeline:
         self.thinner = Thinner(config.adsb_interval_s, self.counts)
         self.outbox = Outbox()
         self.summaries: list[SpectrumSummary] = []
+        self.customs: list[CustomInput] = []
 
     def accept(self, points: list[Observation]) -> None:
         for point in points:
@@ -61,6 +64,16 @@ class Pipeline:
         for summary in self.summaries:
             for message in summary.tick(now):
                 self.outbox.post("spectrum", message)
+        for custom in self.customs:
+            for message in custom.tick(now):
+                self.outbox.post("custom", message)
+
+    def sweeps(self) -> list[dict[str, Any]]:
+        """What every sweeper beside the agent says it runs, for the heartbeat."""
+        out: list[dict[str, Any]] = []
+        for summary in self.summaries:
+            out += summary.sweeps
+        return out[:8]
 
     def flush(self) -> None:
         for out in self.thinner.flush():
@@ -73,6 +86,10 @@ def handler_for(source: Source, config: Config, pipeline: Pipeline) -> Handler:
         summary = SpectrumSummary(config.station_id)
         pipeline.summaries.append(summary)
         return summary.feed
+    if source.reader == "custom":
+        custom = CustomInput(config.station_id, config.custom_interval_s, config.custom_per_minute)
+        pipeline.customs.append(custom)
+        return custom.feed
     if source.reader == "beast":
         return Tracker(source.kind, config.station).feed
     if source.reader == "dump978":
@@ -93,7 +110,7 @@ def reader_task(source: Source, config: Config, pipeline: Pipeline) -> asyncio.T
     handler = handler_for(source, config, pipeline)
     if source.reader == "aircraft_json":
         coro = poll(source.name, source.url, handler, pipeline.accept)
-    elif source.reader in ("auto_rx", "rtl_433"):
+    elif source.reader in ("auto_rx", "rtl_433", "custom"):
         coro = read_datagrams(source.name, source.host, source.port, handler, pipeline.accept)
     else:
         coro = read_stream(source.name, source.host, source.port, handler, pipeline.accept)
@@ -109,6 +126,7 @@ async def _expire_loop(pipeline: Pipeline) -> None:
 async def main(config: Config) -> None:
     pipeline = Pipeline(config)
     publisher = Publisher(config, pipeline.outbox, pipeline.counts)
+    publisher.sweeps = pipeline.sweeps
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):

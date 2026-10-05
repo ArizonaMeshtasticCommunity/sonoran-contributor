@@ -1,10 +1,14 @@
-"""The version 1 messages: one observation, a batch, and the heartbeat.
+"""The version 1 messages: one observation, a batch, the heartbeat, and a mod's points.
 
 The contract is `schema/rf-message-v1.schema.json`, generated from
 Sonoran's `sonoran/rf/schema.py`. This module builds messages that pass
 it. A reader hands over raw values; `observation()` checks them, and
 returns None for a point that is not one, so a bad value never reaches
 the broker and never makes a whole batch invalid.
+
+It needs nothing but the standard library, so a member's own program (a
+"mod", see `docs/MODS.md`) can import it to build the points it sends
+through the agent: `custom_point()` and `custom_batch()`.
 """
 
 from __future__ import annotations
@@ -51,6 +55,13 @@ STATION_ID = re.compile(r"^[a-z0-9-]{3,32}$")
 SOURCE_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,15}$")
 AIRCRAFT_KINDS = ("adsb", "uat")
 FEET = 0.3048
+# A member's mod (#324): its name within the station, and the id of each
+# thing it reports. Sonoran keeps every point under the station and the
+# mod, so a mod can never take another's id or a built-in kind's.
+MOD_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,15}$")
+CUSTOM_ID = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,31}$")
+META_KEY = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]{0,31}$")
+MAX_META_KEYS = 16
 
 
 @dataclass(frozen=True, slots=True)
@@ -254,8 +265,14 @@ def status(
     precision_m: int,
     mesh_node: str | None = None,
     source: str | None = None,
+    sweeps: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Return the heartbeat. `position` must already be rounded."""
+    """Return the heartbeat. `position` must already be rounded.
+
+    `sweeps` is what each sweeper beside the agent says it runs (#324):
+    the tool, the range, the gain and the exact command. Sonoran shows it
+    as reported by the station.
+    """
     out: dict[str, Any] = {"v": VERSION, "station": station}
     if source is not None:
         out["source"] = source
@@ -268,4 +285,84 @@ def status(
     out["counts"] = {"heard": counts.heard, "sent": counts.sent, "dropped": counts.dropped}
     if mesh_node is not None:
         out["mesh_node"] = mesh_node
+    if sweeps:
+        out["sweeps"] = sweeps[:8]
+    return out
+
+
+def flat_meta(meta: Any) -> dict[str, Any]:
+    """Keep a small flat map of short values, as the contract allows.
+
+    Keys must look like identifiers; values must be numbers, true or
+    false, or text of at most `MAX_META_VALUE_CHARS`. Anything else is
+    left out, never cut, as Sonoran would leave it out.
+    """
+    if not isinstance(meta, dict):
+        return {}
+    kept: dict[str, Any] = {}
+    for key, value in meta.items():
+        if len(kept) >= MAX_META_KEYS:
+            break
+        if not isinstance(key, str) or not META_KEY.match(key):
+            continue
+        if isinstance(value, bool) or value is None:
+            kept[key] = value
+        elif isinstance(value, int | float):
+            if math.isfinite(value):
+                kept[key] = value
+        elif isinstance(value, str) and len(value) <= MAX_META_VALUE_CHARS:
+            kept[key] = value
+    return kept if len(json.dumps(kept)) <= MAX_META_BYTES else {}
+
+
+def custom_point(
+    ident: Any,
+    t: float,
+    *,
+    lat: Any = None,
+    lon: Any = None,
+    heard_here: bool = False,
+    meta: Any = None,
+) -> dict[str, Any] | None:
+    """Return one point of a member's mod, or None when it is not one.
+
+    `ident` is the thing's id within the mod. A point may give a
+    position, or say it was `heard_here`, at the station's own rounded
+    position, or neither: then it is listed and never drawn. A position
+    is both `lat` and `lon`, or neither.
+    """
+    ident = ident.strip().lower() if isinstance(ident, str) else ""
+    if not CUSTOM_ID.match(ident) or not math.isfinite(t):
+        return None
+    out: dict[str, Any] = {"id": ident, "t": timestamp(t)}
+    lat_v = _within(lat, -90, 90, 6)
+    lon_v = _within(lon, -180, 180, 6)
+    if (lat is None) != (lon is None) or (lat is not None and (lat_v is None or lon_v is None)):
+        return None
+    if lat_v is not None and lon_v is not None and not heard_here:
+        out["lat"], out["lon"] = lat_v, lon_v
+    if heard_here:
+        out["heard_here"] = True
+    kept = flat_meta(meta)
+    if kept:
+        out["meta"] = kept
+    return out
+
+
+def custom_batch(
+    station: str,
+    mod: str,
+    points: list[dict[str, Any]],
+    sent: float,
+    source: str | None = None,
+) -> dict[str, Any]:
+    """Return a mod's batch for `rf/v1/<station>/custom`. At most MAX_OBS points."""
+    if not MOD_NAME.match(mod):
+        raise ValueError("a mod name is a-z, 0-9 and -, up to 16 characters")
+    if len(points) > MAX_OBS:
+        raise ValueError(f"a batch holds at most {MAX_OBS} points")
+    out: dict[str, Any] = {"v": VERSION, "station": station}
+    if source is not None:
+        out["source"] = source
+    out.update(kind="custom", mod=mod, sent=timestamp(sent), points=points)
     return out

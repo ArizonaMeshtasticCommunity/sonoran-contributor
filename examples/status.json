@@ -5,8 +5,40 @@
   "lat": 33.42,
   "lon": -111.94,
   "precision_m": 1000,
-  "kinds": ["adsb", "uat"],
+  "kinds": [
+    "adsb",
+    "uat"
+  ],
   "agent_version": "0.1.0",
-  "counts": { "heard": 912, "sent": 64, "dropped": 848 },
-  "mesh_node": "!a1b2c3d4"
+  "counts": {
+    "heard": 912,
+    "sent": 64,
+    "dropped": 848
+  },
+  "mesh_node": "!a1b2c3d4",
+  "sweeps": [
+    {
+      "tool": "rtl_power",
+      "tool_version": "2.0.2-2",
+      "name": "ism",
+      "f_start_hz": 902000000,
+      "f_end_hz": 928000000,
+      "bin_hz": 25000,
+      "gain_db": 32.8,
+      "interval_s": 5,
+      "ppm": 0,
+      "dwell_s": 60,
+      "command": "rtl_power -d '<serial>' -f 902000000:928000000:25000 -g 32.8 -i 5 -p 0 -c 20% -"
+    },
+    {
+      "tool": "rtl_power",
+      "name": "uhf",
+      "f_start_hz": 420000000,
+      "f_end_hz": 450000000,
+      "bin_hz": 25000,
+      "gain_db": 32.8,
+      "interval_s": 5,
+      "dwell_s": 60
+    }
+  ]
 }

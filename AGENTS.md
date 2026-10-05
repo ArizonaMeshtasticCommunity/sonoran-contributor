@@ -58,9 +58,11 @@ check this, not only the examples.
 - **No listening ports, no privileges.** The agent makes outgoing
   connections: to its decoders and to the broker, over TLS. The one
   exception is a decoder that only broadcasts and accepts no connection,
-  `radiosonde_auto_rx` and `rtl_433`. Those are read from a UDP socket,
+  `radiosonde_auto_rx` and `rtl_433`, and a member's own mod (`custom`,
+  #324), which sends the same way. Those are read from a UDP socket,
   which serves nothing and accepts no connection, and every datagram is
-  treated as untrusted input. Nothing else binds a port.
+  treated as untrusted input. The `custom` socket is on 127.0.0.1 unless
+  the member names another address. Nothing else binds a port.
 - **The only other outgoing connection is the member's own alert
   webhook**, and only when they set `ALERT_WEBHOOK`. It carries
   conditions (a decoder down, a stalled sweep), never what was heard.
