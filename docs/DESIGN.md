@@ -209,6 +209,50 @@ The agent condenses each minute of sweeps into one message per bin:
 the median, the 95th percentile, the peak, and the share of sweeps in
 which the bin stood more than 6 dB above its own median. See 4.2.
 
+**Any range, more than one (#324).** 902 to 928 MHz is the default, not
+the limit. A member may sweep any range an RTL-SDR tunes, about 24 MHz
+to 1.766 GHz, and more than one:
+
+- **Two dongles:** one `rf-sweep` each, listed as two `spectrum=`
+  sources. Each range is swept all the time.
+- **One dongle taking turns:** `SPECTRUM_RANGES` lists the ranges, and
+  `rf-sweep` sweeps each for `SPECTRUM_DWELL_S` seconds, kept to the wall
+  clock, sending a new header each time it moves on. Each range keeps
+  its own minute in the agent; a minute in which a range was not swept is
+  not sent, and Sonoran draws it as "not swept", never as quiet. A dongle
+  taking turns between N ranges hears each only 1/N of the time.
+- A range outside what the dongle tunes is refused at start. `rtl_power`
+  asked for more starts and returns nothing, which would read as quiet.
+- The repeat and silence checks run per range, across its turns.
+
+**What a station sweeps is reported (#324).** `rf-sweep` starts each
+connection with a plan line, JSON, naming each range, the gain, the
+interval, the tool's version, and the exact command it runs (the
+dongle's serial left out). The agent passes it up in the heartbeat as
+`sweeps`. Nothing is ever run from it: `rf-sweep` builds its command from
+its own settings and only reports what it built. Sonoran shows it as
+reported by the station.
+
+### 3.6 Members' mods
+
+A member may write a program that reads their own receiver and send
+what it hears as their station's data (#324): a decoder we do not
+support, an experiment, a sensor of their own. It sends JSON lines to the
+agent's `custom` input, a UDP socket like those of `rtl_433` and
+`auto_rx`, which accepts no connection and serves nothing. The agent
+checks each line, thins it to one point per thing per
+`CUSTOM_INTERVAL_S`, limits each mod to `CUSTOM_PER_MINUTE`, and sends
+batches on `rf/v1/<station>/custom`. So a mod needs no login of its own.
+
+`rf_agent.messages` needs only the standard library, and `custom_point`
+and `custom_batch` build what the contract allows, so a mod never copies
+the agent's code. `docs/MODS.md` is the guide.
+
+The same rules hold for a mod: local receivers only, never data from the
+internet; privacy as for everything else. None of the agent's checks is
+a defence: Sonoran checks everything again and trusts no station (design
+5.5 in Sonoran).
+
 ---
 
 ## 4. Transport
@@ -329,7 +373,13 @@ The heartbeat carries the rounded station position, the kinds it
 serves, the agent version, and counts: heard, sent, and dropped by
 thinning, since the last heartbeat. A thinned picture must say it is
 thinned. It also names the Meshtastic node on the same site, if any, as
-`mesh_node` (`!a1b2c3d4`), for 3.5.
+`mesh_node` (`!a1b2c3d4`), for 3.5, and what each sweeper beside it
+runs, as `sweeps` (3.5).
+
+A spectrum minute may carry a `name`, the member's label for its range.
+A mod's batch, on `rf/v1/<station>/custom`, names the `mod` and carries
+`points`: an `id`, a time, and a position, or `heard_here`, or neither,
+with a small flat `meta`. All of this is additive, so it stays v1.
 
 ### 4.3 Thinning at the edge
 
@@ -340,7 +390,8 @@ Without it, ADS-B is about one message per aircraft per second.
 | `adsb`, `uat` | One point per aircraft every `ADSB_INTERVAL_S` (20 s), plus the first and last point of each visit. |
 | `sonde` | One point every 5 s. A flight lasts about two hours. |
 | `aprs`, `ism` | Every packet, as received. They are already slow. One APRS packet arrives by several paths, so a copy of the same packet within 30 s is dropped, unless the later copy came to us directly. |
-| `spectrum` | One summary per minute, whatever the sweep rate. |
+| `spectrum` | One summary per range per minute, whatever the sweep rate. |
+| `custom` | One point per thing per `CUSTOM_INTERVAL_S` (10 s), at most `CUSTOM_PER_MINUTE` a mod. |
 
 ---
 

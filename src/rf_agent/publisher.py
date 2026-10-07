@@ -3,7 +3,8 @@
 Topics (design 4.1), for this station only:
 
     rf/v1/<station>/<kind>             batches of at most 100 points, QoS 0
-    rf/v1/<station>/spectrum           a minute of the 900 MHz band, QoS 0
+    rf/v1/<station>/spectrum           a minute of one swept range, QoS 0
+    rf/v1/<station>/custom             a batch from a member's mod, QoS 0
     rf/v1/<station>/status/<source>    the heartbeat, every 60 s, retained, QoS 1
 
 With no `SOURCE_ID` the heartbeat goes to `rf/v1/<station>/status`, as
@@ -43,8 +44,9 @@ HEARTBEAT_S = 60.0
 FLUSH_S = 2.0
 # About ten minutes of a busy site.
 MAX_QUEUED = 10_000
-# Two hours of spectrum minutes, per kind.
-MAX_POSTED = 120
+# Whole messages waiting: two hours of four ranges' spectrum minutes,
+# and members' mods' batches.
+MAX_POSTED = 600
 BACKOFF_MAX_S = 60.0
 
 
@@ -143,6 +145,8 @@ class Publisher:
         self._reported_overflow = 0
         # Called after each heartbeat the broker took: proof the session works.
         self.on_beat: Callable[[], None] | None = None
+        # What the sweepers beside the agent say they run (#324).
+        self.sweeps: Callable[[], list[dict[str, Any]]] = list
 
     async def flush(self, client: Client) -> int:
         """Publish every waiting point, in batches. Returns how many were sent.
@@ -188,6 +192,7 @@ class Publisher:
             precision_m=self.config.precision_m,
             mesh_node=self.config.mesh_node,
             source=self.config.source_id,
+            sweeps=self.sweeps(),
         )
 
     async def heartbeat(self, client: Client) -> Counts:

@@ -6,7 +6,7 @@
 Local receivers · MQTT to one broker · stored and mapped by Sonoran.
 
 [![Contract](https://img.shields.io/badge/contract-v1-EA6A3A?style=flat-square)](schema/rf-message-v1.schema.json)
-[![Phase](https://img.shields.io/badge/phases-1--4%20built-2A6DB2?style=flat-square)](#-roadmap)
+[![Phase](https://img.shields.io/badge/phases-1--5%20built-2A6DB2?style=flat-square)](#-roadmap)
 [![CI](https://github.com/ArizonaMeshtasticCommunity/rf-map/actions/workflows/ci.yml/badge.svg)](https://github.com/ArizonaMeshtasticCommunity/rf-map/actions/workflows/ci.yml)
 [![Sources](https://img.shields.io/badge/sources-local%20only-3776AB?style=flat-square)](#-what-it-reads)
 [![Sonoran](https://img.shields.io/badge/stored%20by-Sonoran-EA6A3A?style=flat-square)](https://github.com/ArizonaMeshtasticCommunity/beta-sonoran)
@@ -28,7 +28,8 @@ traffic control and not for navigation.
 
 ## ✨ Features
 
-- 📶 **The 900 MHz band** — a spare dongle sweeps 902–928 MHz, the band the mesh lives in, to find what interferes with it.
+- 📶 **Spectrum** — a spare dongle sweeps 902–928 MHz, the band the mesh lives in, to find what interferes with it, or any range you choose, or several in turn.
+- 🧩 **Your own mods** — send what your own program decodes through the agent, as your station's data. See [docs/MODS.md](docs/MODS.md).
 - ✈️ **Aircraft** — ADS-B at 1090 MHz and UAT at 978 MHz, from `readsb`, `dump1090-fa` or `dump978-fa`.
 - 🤝 **Never takes your dongle** — reads the decoder's network port, so FlightAware, FR24 and every other feed keep running.
 - 🪶 **Thinned at the edge** — one point per aircraft every 20 s leaves the site, not one a second.
@@ -59,10 +60,11 @@ several readers at once.
 |--------|-------------------------|---------------------|:----:|:-----:|
 | ADS-B | `readsb`, `dump1090-fa` | Beast on TCP 30005, or `aircraft.json` | 1090 MHz | **1** |
 | UAT | `dump978-fa` | JSON on TCP 30979 | 978 MHz | **1** |
-| Spectrum | `rtl_power` in `rf-sweep`, its own dongle | sweep lines on TCP 30950 | 902–928 MHz | **2** |
+| Spectrum | `rtl_power` in `rf-sweep`, its own dongle | sweep lines on TCP 30950 | 902–928 MHz, or any range from 24 MHz to 1.766 GHz | **2** |
 | APRS | `direwolf`, off the air | KISS on TCP 8001 | 144.39 MHz | **3** |
 | Radiosondes | `radiosonde_auto_rx`, upload off | UDP 55672 | 400–406 MHz | **4** |
 | Weather sensors | `rtl_433`, allow-listed | JSON over UDP | 433 / 915 MHz | **4** |
+| Your own mod | your program | JSON lines over UDP 30960 | yours | **5** |
 
 ## 🚀 Quick start
 
@@ -130,7 +132,7 @@ Every setting is an environment variable.
 | `STATION_ID` | Short name, `[a-z0-9-]{3,32}`. The place on the map. | — |
 | `SOURCE_ID` | This Pi's name within the station, `[a-z0-9][a-z0-9-]{0,15}`. Required for a minted login; leave it out only for a login made by hand. | — |
 | `BROKER_URL`, `BROKER_USER`, `BROKER_PASS` | The community broker, and this Pi's own login. | — |
-| `SOURCES` | `kind=url` pairs, comma separated. Kinds: `adsb`, `uat`, `spectrum`, `aprs`, `sonde`, `ism`. See [sources](#sources). | — |
+| `SOURCES` | `kind=url` pairs, comma separated. Kinds: `adsb`, `uat`, `spectrum`, `aprs`, `sonde`, `ism`, `custom`. See [sources](#sources). | — |
 | `STATION_LAT`, `STATION_LON` | Where the antenna is. | — |
 | `STATION_PRECISION_M` | How much to round the station position before it is sent. | `1000` |
 | `ADSB_INTERVAL_S` | Seconds between two points for one aircraft. At least 1. | `20` |
@@ -138,8 +140,10 @@ Every setting is an environment variable.
 | `ISM_ALLOW` | `rtl_433` model names to pass, comma separated, case ignored. Empty means none pass. | empty |
 | `ALERT_WEBHOOK` | Your own Discord webhook, for alerts about this station. See [alerts](#-alerts). | — |
 | `SITE_MESH_NODE` | The Meshtastic node at this site, such as `!a1b2c3d4`, if any, so its own bursts are not read as interference. | — |
+| `CUSTOM_INTERVAL_S` | Seconds between two points of one thing from a [mod](#-your-own-mods). | `10` |
+| `CUSTOM_PER_MINUTE` | The most points one mod may send a minute. | `600` |
 
-`rf-sweep` has settings of its own; see [the 900 MHz band](#-the-900-mhz-band).
+`rf-sweep` has settings of its own; see [spectrum](#-spectrum-the-900-mhz-band-and-any-other-range).
 
 `BROKER_URL` must be `mqtts://`: the agent talks to a broker over TLS
 only, checked against the system's certificate authorities. The port
@@ -172,6 +176,7 @@ The scheme of each URL picks the reader.
 | `aprs=kiss://host:port` | direwolf's KISS stream | 8001 |
 | `sonde=udp://0.0.0.0:port` | `radiosonde_auto_rx` summaries | 55672 |
 | `ism=udp://0.0.0.0:port` | `rtl_433` JSON | — |
+| `custom=udp://127.0.0.1:port` | your own [mod](#-your-own-mods): JSON lines | 30960 |
 
 `radiosonde_auto_rx` and `rtl_433` only broadcast, so those two are
 received on a UDP socket rather than connected to. The socket serves
@@ -196,7 +201,7 @@ posts there when something about your station changes:
 - a decoder stops answering, or keeps closing the connection (readsb
   does that when its dongle is gone), or answers again;
 - the broker is out of reach, or back;
-- the 900 MHz sweep stalls (the same sweep over and over), or sends
+- the sweep stalls (the same sweep over and over), or sends
   nothing for 3 minutes, which most often means the dongle is unplugged;
   and when fresh sweeps return.
 
@@ -211,15 +216,51 @@ agent never logs it.
 
 A Pi that loses power or its network cannot send its own alert.
 
-## 📶 The 900 MHz band
+## 📶 Spectrum: the 900 MHz band, and any other range
 
-For a member with a **spare** dongle and a 915 MHz antenna. `rf-sweep`
-owns that dongle and does nothing else: it sweeps 902 to 928 MHz with
-`rtl_power`, at a fixed gain, and serves the sweeps to the agent. The
-agent condenses each minute into one message per station: for each
-50 kHz bin, the median, the 95th percentile and the peak level, and how
-often the bin stood more than 6 dB above its own median. That last
-number is the one that says "something keeps sitting on LongFast".
+For a member with a **spare** dongle. `rf-sweep` owns that dongle and
+does nothing else: it sweeps with `rtl_power`, at a fixed gain, and
+serves the sweeps to the agent. The agent condenses each minute into
+one message per range: for each bin, the median, the 95th percentile and
+the peak level, and how often the bin stood more than 6 dB above its own
+median. On 902 to 928 MHz, that last number is the one that says
+"something keeps sitting on LongFast".
+
+By default it sweeps 902 to 928 MHz, the band the mesh lives in. It can
+sweep **any range you choose** instead, or several: a band beside the
+mesh, a test you are running, whatever you want to watch. Sonoran marks
+the Meshtastic channels only where a range covers them.
+
+- **Several dongles:** run one `rf-sweep` per dongle, each with its own
+  `SWEEP_SERIAL` and `SPECTRUM_RANGE`, and list each one in the agent:
+  `SOURCES=spectrum=tcp://sweep-a:30950,spectrum=tcp://sweep-b:30950`.
+  Each range is swept all the time.
+- **One dongle, taking turns:** give `SPECTRUM_RANGES` a list. It sweeps
+  each range for `SPECTRUM_DWELL_S` seconds, then the next, kept to the
+  clock. **A dongle that takes turns between N ranges hears each only
+  1/N of the time.** A burst on one range while it is on another is not
+  heard. The map draws those minutes as "not swept", never as quiet.
+
+```yaml
+    environment:
+      SWEEP_SERIAL: SWEEP915
+      SWEEP_GAIN_DB: "32.8"
+      SPECTRUM_RANGES: 902M:928M:25k:name=ism,420M:450M:25k:name=uhf
+      SPECTRUM_DWELL_S: "60"
+```
+
+Frequencies take a `k`, `M` or `G`. `name=` is optional: a short label,
+`a-z`, `0-9` and `-`, for the range picker. An RTL-SDR tunes about
+24 MHz to 1.766 GHz; a range outside that is refused at start, because
+`rtl_power` would sweep nothing and the map would show a quiet band.
+At most 8 ranges, and at most 4,096 bins in each.
+
+The agent reports what `rf-sweep` runs in its heartbeat: the tool and its
+version, each range, the bin, the gain, the interval, and the exact
+`rtl_power` command line, with the dongle's serial left out. The map shows
+it beside your station, as reported by the station. Nothing is ever run
+from the broker or from Sonoran: `rf-sweep` builds its command from its
+own settings, and only says what it built.
 
 A dongle that is unplugged or stalls does not make `rtl_power` exit: it
 prints its last sweep over and over, and never opens the dongle again.
@@ -277,7 +318,9 @@ while aircraft keep flowing, and spectrum starts again when it is back.
 |---------------------|---------|:-------:|
 | `SWEEP_SERIAL` | The serial of the dongle to sweep with. It opens that one and no other. | — |
 | `SWEEP_GAIN_DB` | The gain, fixed, in dB. Automatic gain is refused. | — |
-| `SPECTRUM_RANGE` | `start:end:bin` in Hz. | `902000000:928000000:50000` |
+| `SPECTRUM_RANGE` | `start:end:bin`, one range. | `902000000:928000000:50000` |
+| `SPECTRUM_RANGES` | Several, comma separated, each `start:end:bin[:name=x]`, swept in turn. Not with `SPECTRUM_RANGE`. | — |
+| `SPECTRUM_DWELL_S` | Seconds on each range in turn, 10 to 3600. | `60` |
 | `SWEEP_INTERVAL_S` | Seconds per sweep. | `5` |
 | `SWEEP_PPM` | The dongle's frequency correction. | `0` |
 | `SWEEP_PORT` | The port the agent reads, inside the compose network. | `30950` |
@@ -300,7 +343,31 @@ Before the first run:
 Levels are in dB relative to the dongle's full scale, not dBm. They
 compare one station with itself over time, never two stations. The
 band view shows what occupies the band; it does not say what the thing
-is.
+is. We store power levels only, never what was said: an operator may
+still choose not to store some ranges at all.
+
+## 🧩 Your own mods
+
+Want to send something none of the built-in decoders read? Write a small
+program (a "mod") that reads **your own receiver** and sends what it
+hears to the agent, as JSON lines over UDP. The agent checks each line
+and sends it as your station's data, on your login, with your heartbeat.
+Sonoran shows it in its own "Member mods" layer, marked as from your mod
+and unverified.
+
+```yaml
+      SOURCES: adsb=beast://readsb:30005,custom=udp://127.0.0.1:30960
+```
+
+```sh
+echo '{"mod": "lightning", "id": "strike-1", "heard_here": true, "meta": {"distance_km": 12}}' \
+  | nc -u -w1 127.0.0.1 30960
+```
+
+The rules are the same as for everything else: only what your own
+receiver heard, never data from the internet; positions are yours to
+round. See [docs/MODS.md](docs/MODS.md) for the format, the limits, and a
+complete example.
 
 ## 📻 APRS, radiosondes and sensors
 
@@ -404,9 +471,10 @@ changes, never edit it by hand.
 ## 🗺️ Roadmap
 
 1. **Aircraft** — ADS-B and UAT readers, thinning, heartbeat. Built, here and in Sonoran.
-2. **The 900 MHz band** — `rf-sweep` and the spectrum summary. Built here; Sonoran validates it and will store it and draw the waterfall next.
+2. **Spectrum** — `rf-sweep` and the spectrum summary: the 900 MHz band, any range, several in turn, and the sweep each station reports. Built, here and in Sonoran.
 3. **APRS** — the APRS reader, off the air. Built.
 4. **Radiosondes and weather sensors** — two more readers and the allow-list. Built.
+5. **Members' mods** — the `custom` input and the library in `rf_agent.messages`. Built, here and in Sonoran.
 
 ## 📚 Documentation
 
@@ -415,7 +483,8 @@ changes, never edit it by hand.
 | [`docs/DESIGN.md`](docs/DESIGN.md) | The full design: scope, transport, storage, capacity, privacy. A mirror of Sonoran's `docs/design/rf-map.md`; sections 3 and 4 are owned here |
 | [`AGENTS.md`](AGENTS.md) | The rules for anyone, person or agent, working in this repository |
 | [`schema/rf-message-v1.schema.json`](schema/rf-message-v1.schema.json) | The message contract |
-| [`examples/`](examples) | One valid message of each kind |
+| [`docs/MODS.md`](docs/MODS.md) | Writing your own mod: the format, the limits, and a complete example |
+| [`examples/`](examples) | One valid message of each kind, and an example mod |
 
 ## 📄 Licence
 

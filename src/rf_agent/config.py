@@ -20,18 +20,23 @@ from rf_agent.messages import SOURCE_ID, STATION_ID
 
 logger = logging.getLogger(__name__)
 
-ALL_KINDS = ("adsb", "uat", "aprs", "sonde", "ism", "spectrum")
+ALL_KINDS = ("adsb", "uat", "aprs", "sonde", "ism", "spectrum", "custom")
 # Everything is built: aircraft (phase 1), the 900 MHz band (phase 2),
-# APRS (phase 3), radiosondes and weather sensors (phase 4).
+# APRS (phase 3), radiosondes and weather sensors (phase 4), and members'
+# own mods (#324).
 BUILT_KINDS = ALL_KINDS
 # Kinds a decoder only broadcasts to, so the agent receives datagrams
 # rather than connecting out. See `sources.read_datagrams`.
-UDP_KINDS = ("sonde", "ism")
+UDP_KINDS = ("sonde", "ism", "custom")
+# Kinds that are not observations, so the heartbeat does not list them:
+# a sweep's minutes and a mod's points say for themselves what they are.
+NOT_OBSERVED = ("spectrum", "custom")
 BEAST_PORT = 30005
 DUMP978_JSON_PORT = 30979
 RF_SWEEP_PORT = 30950
 KISS_PORT = 8001
 AUTO_RX_PORT = 55672
+CUSTOM_PORT = 30960
 MQTTS_PORT = 8883
 
 
@@ -88,6 +93,10 @@ class Config:
     # The member's own Discord webhook for alerts, or None. It holds a
     # token: never log it, and keep it out of repr.
     alert_webhook: str | None = field(default=None, repr=False)
+    # Members' mods (#324): one point per thing per this many seconds,
+    # and at most this many points a minute from one mod.
+    custom_interval_s: float = 10.0
+    custom_per_minute: int = 600
 
     @property
     def station(self) -> tuple[float, float] | None:
@@ -103,7 +112,7 @@ class Config:
         Spectrum is not one: the contract's `kinds` lists what a station
         observes, and its minutes say for themselves that it sweeps.
         """
-        return sorted({s.kind for s in self.sources if s.kind != "spectrum"})
+        return sorted({s.kind for s in self.sources if s.kind not in NOT_OBSERVED})
 
 
 def _source(kind: str, url: str) -> Source:
@@ -118,6 +127,19 @@ def _source(kind: str, url: str) -> Source:
             return Source(kind, "kiss", url, parts.hostname, parts.port or KISS_PORT)
         except ValueError as exc:
             raise ConfigError(f"SOURCES: {kind}={url} has a bad port") from exc
+    if kind == "custom":
+        if scheme != "udp":
+            raise ConfigError(
+                f"SOURCES: {kind}={url}: a mod sends to the agent over UDP, "
+                f"such as custom=udp://127.0.0.1:{CUSTOM_PORT}"
+            )
+        try:
+            port = parts.port or CUSTOM_PORT
+        except ValueError as exc:
+            raise ConfigError(f"SOURCES: {kind}={url} has a bad port") from exc
+        # Only this machine, unless the member names another address: a
+        # mod in another container of the same compose file needs one.
+        return Source(kind, "custom", url, parts.hostname or "127.0.0.1", port)
     if kind in UDP_KINDS:
         reader = "auto_rx" if kind == "sonde" else "rtl_433"
         default_port = AUTO_RX_PORT if kind == "sonde" else 0
@@ -298,6 +320,20 @@ def load(env: Mapping[str, str]) -> Config:
         if hook.scheme != "https" or not hook.hostname:
             errors.append("ALERT_WEBHOOK must be an https:// webhook URL")
 
+    custom_interval = _float(env, "CUSTOM_INTERVAL_S", errors)
+    if custom_interval is None:
+        custom_interval = 10.0
+    elif custom_interval < 1:
+        errors.append("CUSTOM_INTERVAL_S must be at least 1")
+    per_minute_text = env.get("CUSTOM_PER_MINUTE", "").strip() or "600"
+    per_minute = 600
+    try:
+        per_minute = int(per_minute_text)
+        if not 1 <= per_minute <= 6000:
+            errors.append("CUSTOM_PER_MINUTE must be between 1 and 6000")
+    except ValueError:
+        errors.append(f"CUSTOM_PER_MINUTE must be a whole number, not {per_minute_text!r}")
+
     log_level = env.get("LOG_LEVEL", "").strip().upper() or "INFO"
     if log_level not in ("DEBUG", "INFO", "WARNING", "ERROR"):
         errors.append("LOG_LEVEL must be DEBUG, INFO, WARNING or ERROR")
@@ -321,4 +357,6 @@ def load(env: Mapping[str, str]) -> Config:
         source_id=source_id,
         ism_allow=ism_allow,
         alert_webhook=alert_webhook,
+        custom_interval_s=custom_interval,
+        custom_per_minute=per_minute,
     )
