@@ -68,7 +68,13 @@ on the RF tab. It never holds a Discord id.
   `MINTS_PER_HOUR` times an hour. An operator is not limited.
 - A location in `RESERVED_LOCATIONS` can be created by an operator only.
   Use it for a station whose login was made by hand.
-- Every change is logged in the registrar's database, with the actor.
+- Every change is logged in the registrar's database (`event`), with
+  the actor's Discord id. A refused change is logged too, as `refused`,
+  with who tried and why, such as `mint: tempe-roof is not yours`. A
+  refusal does not count towards `MINTS_PER_HOUR`.
+- Each login's row names the Discord id that minted it (`created_by`)
+  and the one that last rotated it (`rotated_by`). A database made
+  before these columns gets them filled from its event log at start.
 
 ## The broker
 

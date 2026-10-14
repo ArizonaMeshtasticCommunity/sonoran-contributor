@@ -12,15 +12,16 @@ publishes the location's registry entry, retained, through the broker.
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import secrets
 import time
 import unicodedata
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, TypeVar
 
 from rf_agent.messages import SOURCE_ID, STATION_ID
 from rf_registrar.broker import Broker, BrokerError, dispatcher_rules, rules_for
@@ -111,6 +112,47 @@ def _label(value: object) -> str:
     return text
 
 
+_T = TypeVar("_T")
+# How much of what a member typed is kept in a refusal's row.
+_LOGGED_CHARS = 64
+
+
+def _audited(
+    action: str, labelled: bool = False
+) -> Callable[[Callable[..., Awaitable[_T]]], Callable[..., Awaitable[_T]]]:
+    """Log a refused change too: who tried, what, and why.
+
+    A change that succeeds logs itself. One that is refused, for any
+    reason, logs `refused` with the actor's Discord id, the location and
+    source as given, and `<action>: <reason>`. `refused` is not `mint` or
+    `rotate`, so a refusal never uses up the member's rate.
+    """
+
+    def wrap(method: Callable[..., Awaitable[_T]]) -> Callable[..., Awaitable[_T]]:
+        @functools.wraps(method)
+        async def run(self: Registrar, *args: Any, **kwargs: Any) -> _T:
+            try:
+                return await method(self, *args, **kwargs)
+            except RegistrarError as exc:
+                actor = kwargs.get("actor", args[-1] if args else None)
+                if isinstance(actor, Actor):
+                    location = str(args[0])[:_LOGGED_CHARS] if args else None
+                    label = str(args[1])[:_LOGGED_CHARS] if labelled and len(args) > 2 else None
+                    self.store.log(
+                        actor.id,
+                        "refused",
+                        location,
+                        label,
+                        detail=f"{action}: {exc}"[:200],
+                        at=self.clock(),
+                    )
+                raise
+
+        return run
+
+    return wrap
+
+
 class Registrar:
     def __init__(
         self,
@@ -141,6 +183,8 @@ class Registrar:
                     "username": s.username,
                     "created_at": s.created_at,
                     "rotated_at": s.rotated_at,
+                    "created_by": s.created_by,
+                    "rotated_by": s.rotated_by,
                 }
                 for s in self.store.sources(location.id)
             ],
@@ -228,6 +272,7 @@ class Registrar:
 
     # --- locations ----------------------------------------------------
 
+    @_audited("create")
     async def create(self, location_id: object, display_name: object, actor: Actor) -> Location:
         ident = _location_id(location_id)
         name = clean_name(display_name, "display name")
@@ -244,6 +289,7 @@ class Registrar:
         await self.publish(ident)
         return location
 
+    @_audited("rename")
     async def rename(self, location_id: str, display_name: object, actor: Actor) -> Location:
         location = self.owned(location_id, actor)
         name = clean_name(display_name, "display name")
@@ -252,6 +298,7 @@ class Registrar:
         await self.publish(location.id)
         return self.get(location.id)
 
+    @_audited("transfer")
     async def transfer(
         self, location_id: str, new_owner_id: object, new_owner_name: object, actor: Actor
     ) -> Location:
@@ -267,6 +314,7 @@ class Registrar:
         await self.publish(location.id)
         return self.get(location.id)
 
+    @_audited("delete")
     async def delete(self, location_id: str, actor: Actor) -> None:
         """Revoke every source, then remove the location and its entry."""
         location = self.owned(location_id, actor)
@@ -289,6 +337,7 @@ class Registrar:
         if used >= self.config.mints_per_hour:
             raise Limited(f"at most {self.config.mints_per_hour} mints and rotations an hour")
 
+    @_audited("mint", labelled=True)
     async def mint(self, location_id: str, label: object, actor: Actor) -> Credentials:
         location = self.owned(location_id, actor)
         name = _label(label)
@@ -312,11 +361,14 @@ class Registrar:
             # broker's defaults. Take it away again.
             await self._quietly(self.broker.delete_user(username))
             raise Unavailable(f"the broker refused the rules: {exc}") from exc
-        self.store.add_source(Source(location.id, name, username, self.clock(), None))
+        self.store.add_source(
+            Source(location.id, name, username, self.clock(), None, created_by=actor.id)
+        )
         self.store.log(actor.id, "mint", location.id, name, at=self.clock())
         await self.publish(location.id)
         return Credentials(location.id, name, username, password)
 
+    @_audited("rotate", labelled=True)
     async def rotate(self, location_id: str, label: object, actor: Actor) -> Credentials:
         """A new password. The Pi is disconnected and the old one stops working."""
         location = self.owned(location_id, actor)
@@ -328,10 +380,11 @@ class Registrar:
             await self.broker.kick(source.username)
         except BrokerError as exc:
             raise Unavailable(f"the broker refused: {exc}") from exc
-        self.store.rotated(location.id, source.label, self.clock())
+        self.store.rotated(location.id, source.label, self.clock(), actor.id)
         self.store.log(actor.id, "rotate", location.id, source.label, at=self.clock())
         return Credentials(location.id, source.label, source.username, password)
 
+    @_audited("revoke", labelled=True)
     async def revoke(self, location_id: str, label: object, actor: Actor) -> None:
         """Remove the login. The Pi is disconnected at once."""
         location = self.owned(location_id, actor)
