@@ -1,6 +1,6 @@
 [project]
 name = "rf-agent"
-version = "0.5.0"
+version = "0.6.0"
 description = "Reads the decoders beside a member's SDR and publishes what they hear to the community broker."
 readme = "README.md"
 requires-python = ">=3.13"
@@ -9,11 +9,17 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Mesh jobs for Sonoran (#178): the Meshtastic library talks to the
+# member's own node. An RF-only station does not need it.
+mesh = [
+    "meshtastic>=2.7.11,<3",
+]
 registrar = [
     "aiohttp>=3.10,<4",
 ]
 dev = [
     "aiohttp>=3.10,<4",
+    "meshtastic>=2.7.11,<3",
     "jsonschema>=4.23",
     "rfc3339-validator>=0.1.4",
     "pytest>=8",
@@ -23,6 +29,7 @@ dev = [
 
 [project.scripts]
 rf-agent = "rf_agent.agent:run"
+sonoran-contributor = "sonoran_contributor.main:run"
 rf-sweep = "rf_agent.sweep:run"
 rf-registrar = "rf_registrar.app:run"
 

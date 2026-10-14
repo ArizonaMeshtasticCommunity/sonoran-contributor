@@ -239,3 +239,88 @@ def test_the_status_passes_the_contract() -> None:
     )
     assert message["mesh_node"] == "!a1b2c3d4"
     assert_valid(message)
+
+
+# --- The node adapter, with the library's real protobufs ---------------
+
+
+def _packet(stats: dict[str, Any], hop_start: int = 3, hop_limit: int = 1) -> dict[str, Any]:
+    from meshtastic.protobuf import mesh_pb2, telemetry_pb2
+
+    telemetry = telemetry_pb2.Telemetry()
+    for key, value in stats.items():
+        setattr(telemetry.local_stats, key, value)
+    raw = mesh_pb2.MeshPacket(hop_start=hop_start, hop_limit=hop_limit, rx_snr=-6.25, rx_rssi=-117)
+    return {"decoded": {"telemetry": {"raw": telemetry}}, "raw": raw}
+
+
+def test_a_reply_packet_gives_localstats_by_protobuf_name() -> None:
+    from sonoran_contributor.node import reply_from_packet
+
+    reply = reply_from_packet(_packet({"noise_floor": -101, "num_tx_relay": 9}), NOW)
+    assert reply.local_stats["noise_floor"] == -101
+    assert reply.local_stats["num_tx_relay"] == 9
+    assert (reply.hops, reply.rx_snr, reply.rx_rssi) == (2, -6.25, -117)
+
+
+def test_a_zero_noise_floor_is_not_measured() -> None:
+    """The firmware leaves it 0 when the radio cannot measure it."""
+    from sonoran_contributor.node import reply_from_packet
+
+    reply = reply_from_packet(_packet({"noise_floor": 0, "num_tx_relay": 1}), NOW)
+    assert "noise_floor" not in reply.local_stats
+
+
+def test_a_routing_answer_is_an_error_with_its_reason() -> None:
+    from sonoran_contributor.node import reply_from_packet
+
+    with pytest.raises(LinkError, match="NO_RESPONSE"):
+        reply_from_packet({"decoded": {"routing": {"errorReason": "NO_RESPONSE"}}}, NOW)
+
+
+def test_the_node_adapter_sends_no_admin_message() -> None:
+    """Only a LocalStats request. Never admin, never a setting (#179)."""
+    source = (ROOT / "src" / "sonoran_contributor" / "node.py").read_text()
+    code = "\n".join(line for line in source.splitlines() if not line.lstrip().startswith("#"))
+    for word in ("ADMIN_APP", "admin_pb2", "writeConfig", "setOwner", "sendText", "localNode."):
+        assert word not in code
+    assert code.count("sendData") == 1 and "TELEMETRY_APP" in code
+
+
+# --- Settings ----------------------------------------------------------
+
+ENV = {
+    "STATION_ID": "phoenix",
+    "SOURCE_ID": "pi5",
+    "BROKER_URL": "mqtts://broker.example:8883",
+    "BROKER_USER": "rf-phoenix-pi5",
+    "BROKER_PASS": "x",
+    "MESH_NODE": "tcp://meshnode",
+}
+
+
+def test_the_node_port_is_the_librarys_default() -> None:
+    from sonoran_contributor.config import load_mesh
+
+    config = load_mesh(ENV)
+    assert (config.node_host, config.node_port, config.allow) == (
+        "meshnode",
+        4403,
+        frozenset({"local_stats"}),
+    )
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"SOURCE_ID": ""},
+        {"BROKER_URL": "mqtt://broker.example:1883"},
+        {"MESH_NODE": "http://meshnode"},
+        {"MESH_JOBS": "local_stats,admin"},
+    ],
+)
+def test_settings_that_cannot_work_are_refused(change: dict[str, str]) -> None:
+    from sonoran_contributor.config import ConfigError, load_mesh
+
+    with pytest.raises(ConfigError):
+        load_mesh({**ENV, **change})

@@ -123,15 +123,17 @@ async def _expire_loop(pipeline: Pipeline) -> None:
         pipeline.expire(time.time())
 
 
-async def main(config: Config) -> None:
+async def main(config: Config, stop: asyncio.Event | None = None) -> None:
+    """Run until SIGTERM, or until `stop` is set by `sonoran-contributor`."""
     pipeline = Pipeline(config)
     publisher = Publisher(config, pipeline.outbox, pipeline.counts)
     publisher.sweeps = pipeline.sweeps
-    stop = asyncio.Event()
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        with contextlib.suppress(NotImplementedError):
-            loop.add_signal_handler(sig, stop.set)
+    if stop is None:
+        stop = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            with contextlib.suppress(NotImplementedError):
+                loop.add_signal_handler(sig, stop.set)
 
     logger.info(
         "rf-agent %s, station %s, sources: %s",
