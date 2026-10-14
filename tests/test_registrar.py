@@ -452,3 +452,85 @@ async def test_a_heartbeat_that_cannot_be_cleared_does_not_undo_the_revoke(reg, 
     broker.fail.add("publish_retained")
     await reg.revoke("tempe-roof", "adsb-pi", OWNER)
     assert "rf-tempe-roof-adsb-pi" not in broker.users
+
+
+# --- Mesh jobs for Sonoran (#178) ---------------------------------------
+
+CONTRIB = "sonoran/v1/contributors"
+
+
+def _decide(rules, action, topic):
+    """The first matching rule's permission, as EMQX decides (+ and #)."""
+
+    def matches(pattern, name):
+        p, n = pattern.split("/"), name.split("/")
+        for i, part in enumerate(p):
+            if part == "#":
+                return True
+            if i >= len(n) or (part != "+" and part != n[i]):
+                return False
+        return len(p) == len(n)
+
+    for rule in rules:
+        if rule["action"] in (action, "all") and matches(rule["topic"], topic):
+            return rule["permission"]
+    return None
+
+
+def test_a_login_may_take_its_own_jobs_and_answer_them_only():
+    rules = rules_for("tempe-roof", "pi")
+    own = f"{CONTRIB}/tempe-roof/pi"
+    job = "0" * 32
+    assert _decide(rules, "subscribe", f"{own}/outbox/{job}") == "allow"
+    assert _decide(rules, "subscribe", f"{own}/outbox/+") == "allow"
+    assert _decide(rules, "publish", f"{own}/inbox/{job}") == "allow"
+    assert _decide(rules, "publish", f"{own}/status") == "allow"
+    # Never its own outbox: only Sonoran makes jobs.
+    assert _decide(rules, "publish", f"{own}/outbox/{job}") == "deny"
+    # Never another contributor's, or another source's of the same location.
+    assert _decide(rules, "subscribe", f"{CONTRIB}/mesa/pi/outbox/{job}") == "deny"
+    assert _decide(rules, "subscribe", f"{CONTRIB}/tempe-roof/sweep/outbox/{job}") == "deny"
+    assert _decide(rules, "publish", f"{CONTRIB}/tempe-roof/sweep/inbox/{job}") == "deny"
+    assert _decide(rules, "subscribe", f"{CONTRIB}/#") == "deny"
+    # The RF rules are as they were.
+    assert _decide(rules, "publish", "rf/v1/tempe-roof/adsb") == "allow"
+    assert _decide(rules, "publish", "rf/v1/tempe-roof/registry") == "deny"
+
+
+def test_the_dispatcher_may_publish_jobs_and_read_results():
+    from rf_registrar.broker import dispatcher_rules
+
+    rules = dispatcher_rules()
+    job = "0" * 32
+    assert _decide(rules, "publish", f"{CONTRIB}/tempe-roof/pi/outbox/{job}") == "allow"
+    assert _decide(rules, "subscribe", f"{CONTRIB}/+/+/inbox/+") == "allow"
+    assert _decide(rules, "subscribe", f"{CONTRIB}/+/+/status") == "allow"
+    assert _decide(rules, "publish", f"{CONTRIB}/tempe-roof/pi/inbox/{job}") == "deny"
+    assert _decide(rules, "publish", "rf/v1/tempe-roof/adsb") == "deny"
+
+
+def test_every_other_client_is_kept_out_of_the_contributor_tree():
+    """The broker allows what no rule names, so the tree needs its own deny."""
+    from rf_registrar.broker import ALL_CLIENT_GUARDS
+
+    assert _decide(ALL_CLIENT_GUARDS, "subscribe", f"{CONTRIB}/tempe-roof/pi/outbox/x") == "deny"
+    assert _decide(ALL_CLIENT_GUARDS, "publish", f"{CONTRIB}/tempe-roof/pi/inbox/x") == "deny"
+    assert _decide(ALL_CLIENT_GUARDS, "publish", "rf/v1/tempe-roof/registry") == "deny"
+
+
+async def test_start_gives_existing_logins_the_new_rules(reg, broker):
+    await reg.create("tempe-roof", "Tempe roof", OWNER)
+    creds = await reg.mint("tempe-roof", "pi", OWNER)
+    broker.rules[creds.username] = [{"permission": "deny", "action": "all", "topic": "#"}]
+    await reg.start()
+    assert broker.rules[creds.username] == rules_for("tempe-roof", "pi")
+
+
+async def test_start_sets_the_dispatchers_rules_when_it_is_named(broker, clock):
+    from rf_registrar.broker import dispatcher_rules
+
+    named = Registrar(
+        config(dispatcher_username="sonoran-contrib"), Store(":memory:"), broker, clock=clock
+    )
+    await named.start()
+    assert broker.rules["sonoran-contrib"] == dispatcher_rules()
