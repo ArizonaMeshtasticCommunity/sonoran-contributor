@@ -23,7 +23,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from rf_agent.messages import SOURCE_ID, STATION_ID
-from rf_registrar.broker import Broker, BrokerError, rules_for
+from rf_registrar.broker import Broker, BrokerError, dispatcher_rules, rules_for
 from rf_registrar.config import Config
 from rf_registrar.store import Location, Source, Store
 
@@ -188,16 +188,39 @@ class Registrar:
             logger.exception("could not publish the registry entry of %s", location_id)
 
     async def start(self) -> None:
-        """At start: guard the registry topic, then publish every entry again."""
+        """At start: the guards, every login's rules, then every entry again.
+
+        A login's rules are written again, so a login minted before a rule
+        change (such as the contributor topics, Sonoran #178) gets it.
+        """
         try:
             if await self.broker.guard_registry():
-                logger.warning("added the broker rule that guards rf/v1/+/registry")
+                logger.warning(
+                    "added an all-clients broker rule for rf/v1/+/registry "
+                    "or sonoran/v1/contributors/#"
+                )
         except BrokerError:
             logger.exception(
-                "could not check the broker rule that guards rf/v1/+/registry; "
-                "a login made by hand may be able to write its registry entry"
+                "could not check the all-clients broker rules; a login made by hand may be "
+                "able to write its registry entry or the contributor topics"
             )
+        await self.reapply_rules()
         await self.republish_all()
+
+    async def reapply_rules(self) -> None:
+        for location in self.store.locations():
+            for source in self.store.sources(location.id):
+                try:
+                    await self.broker.set_rules(
+                        source.username, rules_for(location.id, source.label)
+                    )
+                except BrokerError:
+                    logger.exception("could not write the rules of %s", source.username)
+        if self.config.dispatcher_username:
+            try:
+                await self.broker.set_rules(self.config.dispatcher_username, dispatcher_rules())
+            except BrokerError:
+                logger.exception("could not write the dispatcher's rules")
 
     async def republish_all(self) -> None:
         for location in self.store.locations():

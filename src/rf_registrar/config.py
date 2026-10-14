@@ -35,6 +35,10 @@ class Config:
     # Location ids only an operator may create, such as a station whose
     # login was made by hand before the registrar.
     reserved: frozenset[str] = frozenset()
+    # Sonoran's dispatcher login (Sonoran #178), made by an operator. At
+    # start the registrar writes its rules: the only login that may
+    # publish a mesh job. Empty: no dispatcher rules are written.
+    dispatcher_username: str = ""
 
 
 def _int(env: Mapping[str, str], name: str, default: int, errors: list[str]) -> int:
@@ -81,6 +85,7 @@ def load(env: Mapping[str, str]) -> Config:
         max_sources=_int(env, "MAX_SOURCES_PER_LOCATION", 8, errors),
         mints_per_hour=_int(env, "MINTS_PER_HOUR", 10, errors),
         reserved=reserved,
+        dispatcher_username=env.get("DISPATCHER_USERNAME", "").strip(),
     )
     if errors:
         raise ConfigError("; ".join(errors))
