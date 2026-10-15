@@ -14,7 +14,8 @@
 FROM --platform=$BUILDPLATFORM ghcr.io/astral-sh/uv:0.10.1@sha256:452e02b117acd2d4eb3ba81a607bed9733b101b6c49492e352b1973463389012 AS lock
 WORKDIR /src
 COPY pyproject.toml uv.lock ./
-RUN ["/uv", "export", "--frozen", "--no-dev", "--no-emit-project", \
+# `--extra mesh`: the Meshtastic library, for mesh jobs (Sonoran #178).
+RUN ["/uv", "export", "--frozen", "--no-dev", "--no-emit-project", "--extra", "mesh", \
      "--format", "requirements-txt", "-o", "/requirements.txt"]
 
 FROM python:3.13-slim
@@ -37,9 +38,11 @@ COPY pyproject.toml README.md ./
 COPY src ./src
 RUN pip install --no-deps . && rm -rf /app/src
 
-# No privileges, no listening ports. The agent only connects out: to its
-# decoders, and to the broker over TLS.
+# No privileges, no listening ports. The contributor only connects out:
+# to its decoders, to the member's own node, and to the broker over TLS.
 RUN useradd --system --no-create-home --uid 10001 rf-agent
 USER rf-agent
 
-ENTRYPOINT ["rf-agent"]
+# Runs the RF agent when SOURCES is set, mesh jobs when MESH_NODE is set,
+# or both. A station that ran `rf-agent` runs the same with this.
+ENTRYPOINT ["sonoran-contributor"]

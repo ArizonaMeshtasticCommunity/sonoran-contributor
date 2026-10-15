@@ -1,9 +1,9 @@
 <div align="center">
 
-# rf-map
+# sonoran-contributor
 
-**What the community's own radios hear, beyond Meshtastic.**
-Local receivers · MQTT to one broker · stored and mapped by Sonoran.
+**What the community's own radios hear, and what our own nodes can ask.**
+Local receivers · mesh jobs on your own node · MQTT to one broker · stored and mapped by Sonoran.
 
 [![Contract](https://img.shields.io/badge/contract-v1-EA6A3A?style=flat-square)](schema/rf-message-v1.schema.json)
 [![Phase](https://img.shields.io/badge/phases-1--5%20built-2A6DB2?style=flat-square)](#-roadmap)
@@ -14,6 +14,15 @@ Local receivers · MQTT to one broker · stored and mapped by Sonoran.
 </div>
 
 ---
+
+`sonoran-contributor` runs at a member's site. It does two things, and
+you turn on either or both:
+
+- **RF**: the RF agent (`rf-agent`, below) reads the decoders beside
+  your SDR.
+- **Mesh jobs**: it asks nodes on the mesh for what they do not
+  broadcast, with your own Meshtastic node, for Sonoran. The first job
+  is the measured noise floor. See [Mesh jobs](#-mesh-jobs-for-sonoran).
 
 `rf-agent` runs beside a member's SDR. It reads the decoder they already
 run, thins what it hears, and publishes it to the community broker.
@@ -74,7 +83,7 @@ privileges, no listening ports.
 ```yaml
 services:
   rf-agent:
-    image: ghcr.io/arizonameshtasticcommunity/rf-agent:1
+    image: ghcr.io/arizonameshtasticcommunity/sonoran-contributor:1
     restart: unless-stopped
     logging:
       options:
@@ -122,6 +131,55 @@ logs to journald or syslog instead, cap that there, such as
 > [!NOTE]
 > dump978-fa serves raw frames on 30978 and decoded JSON on 30979. The
 > agent reads the JSON. Pointed at the raw port, it logs that it is.
+
+## 🛰️ Mesh jobs for Sonoran
+
+A node measures its own radio, such as its noise floor, and keeps it in
+`LocalStats`. It does not send that over the mesh. It answers a request
+for it, to the node that asked, as a direct message. Sonoran has no
+node on the mesh to ask with, but your node can ask (Sonoran #178).
+
+Turn it on with `MESH_NODE`, beside the settings above. `SOURCE_ID` is
+required. The same login does both RF and mesh jobs.
+
+```yaml
+    environment:
+      # ...STATION_ID, SOURCE_ID, BROKER_* as above...
+      MESH_NODE: tcp://192.168.1.50      # your node's TCP API, port 4403
+      # MESH_NODE: serial:///dev/ttyUSB0 # or a USB serial port (add the device)
+      # MESH_JOBS: local_stats           # the job kinds you allow; the default
+```
+
+How it works:
+
+1. Every minute it sends Sonoran a heartbeat with the nodes your node
+   hears, and how many hops away they are.
+2. Sonoran picks a router that is due, and the contributor that hears it
+   with the fewest hops. It puts one job in that contributor's outbox.
+3. Your node sends that router one LocalStats request, and waits up to
+   300 seconds for the answer.
+4. The contributor sends the answer, or `no_reply`, to Sonoran. Sonoran
+   shows it as the **measured noise floor** on the node page and the RF
+   tab.
+
+What it never does:
+
+- It never sends an admin message, and never changes a setting on your
+  node or any other.
+- It does only the job kinds in `MESH_JOBS`.
+- It does one job at a time.
+- Sonoran starts at most one round for a node in the firmware's own
+  telemetry interval: 12 hours for a router, 1 hour for other roles.
+  If your node gets no answer, Sonoran may give the same node to
+  another contributor in that round. So a node that does not answer
+  can be asked once by each contributor that hears it.
+- One job is one request and one answer. Every node between relays
+  each of them, so a node 3 hops away costs about 6 transmissions.
+- It opens no port. It connects out to your node and to the broker.
+
+The topics and messages are in
+[`schema/contributor-message-v1.schema.json`](schema/contributor-message-v1.schema.json),
+copied from Sonoran. See [docs/MESH-JOBS.md](docs/MESH-JOBS.md).
 
 ## ⚙️ Configuration
 

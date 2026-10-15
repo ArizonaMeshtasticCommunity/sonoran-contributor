@@ -452,3 +452,172 @@ async def test_a_heartbeat_that_cannot_be_cleared_does_not_undo_the_revoke(reg, 
     broker.fail.add("publish_retained")
     await reg.revoke("tempe-roof", "adsb-pi", OWNER)
     assert "rf-tempe-roof-adsb-pi" not in broker.users
+
+
+# --- Mesh jobs for Sonoran (#178) ---------------------------------------
+
+CONTRIB = "sonoran/v1/contributors"
+
+
+def _decide(rules, action, topic):
+    """The first matching rule's permission, as EMQX decides (+ and #)."""
+
+    def matches(pattern, name):
+        p, n = pattern.split("/"), name.split("/")
+        for i, part in enumerate(p):
+            if part == "#":
+                return True
+            if i >= len(n) or (part != "+" and part != n[i]):
+                return False
+        return len(p) == len(n)
+
+    for rule in rules:
+        if rule["action"] in (action, "all") and matches(rule["topic"], topic):
+            return rule["permission"]
+    return None
+
+
+def test_a_login_may_take_its_own_jobs_and_answer_them_only():
+    rules = rules_for("tempe-roof", "pi")
+    own = f"{CONTRIB}/tempe-roof/pi"
+    job = "0" * 32
+    assert _decide(rules, "subscribe", f"{own}/outbox/{job}") == "allow"
+    assert _decide(rules, "subscribe", f"{own}/outbox/+") == "allow"
+    assert _decide(rules, "publish", f"{own}/inbox/{job}") == "allow"
+    assert _decide(rules, "publish", f"{own}/status") == "allow"
+    # Never its own outbox: only Sonoran makes jobs.
+    assert _decide(rules, "publish", f"{own}/outbox/{job}") == "deny"
+    # Never another contributor's, or another source's of the same location.
+    assert _decide(rules, "subscribe", f"{CONTRIB}/mesa/pi/outbox/{job}") == "deny"
+    assert _decide(rules, "subscribe", f"{CONTRIB}/tempe-roof/sweep/outbox/{job}") == "deny"
+    assert _decide(rules, "publish", f"{CONTRIB}/tempe-roof/sweep/inbox/{job}") == "deny"
+    assert _decide(rules, "subscribe", f"{CONTRIB}/#") == "deny"
+    # The RF rules are as they were.
+    assert _decide(rules, "publish", "rf/v1/tempe-roof/adsb") == "allow"
+    assert _decide(rules, "publish", "rf/v1/tempe-roof/registry") == "deny"
+
+
+def test_the_dispatcher_may_publish_jobs_and_read_results():
+    from rf_registrar.broker import dispatcher_rules
+
+    rules = dispatcher_rules()
+    job = "0" * 32
+    assert _decide(rules, "publish", f"{CONTRIB}/tempe-roof/pi/outbox/{job}") == "allow"
+    assert _decide(rules, "subscribe", f"{CONTRIB}/+/+/inbox/+") == "allow"
+    assert _decide(rules, "subscribe", f"{CONTRIB}/+/+/status") == "allow"
+    assert _decide(rules, "publish", f"{CONTRIB}/tempe-roof/pi/inbox/{job}") == "deny"
+    assert _decide(rules, "publish", "rf/v1/tempe-roof/adsb") == "deny"
+
+
+def test_every_other_client_is_kept_out_of_the_contributor_tree():
+    """The broker allows what no rule names, so the tree needs its own deny."""
+    from rf_registrar.broker import ALL_CLIENT_GUARDS
+
+    assert _decide(ALL_CLIENT_GUARDS, "subscribe", f"{CONTRIB}/tempe-roof/pi/outbox/x") == "deny"
+    assert _decide(ALL_CLIENT_GUARDS, "publish", f"{CONTRIB}/tempe-roof/pi/inbox/x") == "deny"
+    assert _decide(ALL_CLIENT_GUARDS, "publish", "rf/v1/tempe-roof/registry") == "deny"
+
+
+async def test_start_gives_existing_logins_the_new_rules(reg, broker):
+    await reg.create("tempe-roof", "Tempe roof", OWNER)
+    creds = await reg.mint("tempe-roof", "pi", OWNER)
+    broker.rules[creds.username] = [{"permission": "deny", "action": "all", "topic": "#"}]
+    await reg.start()
+    assert broker.rules[creds.username] == rules_for("tempe-roof", "pi")
+
+
+async def test_start_sets_the_dispatchers_rules_when_it_is_named(broker, clock):
+    from rf_registrar.broker import dispatcher_rules
+
+    named = Registrar(
+        config(dispatcher_username="sonoran-contrib"), Store(":memory:"), broker, clock=clock
+    )
+    await named.start()
+    assert broker.rules["sonoran-contrib"] == dispatcher_rules()
+
+
+# --- Who did it: the Discord id, for every change and every refusal ----
+
+
+def _events(reg):
+    return reg.store.db.execute(
+        "SELECT actor_id, action, location, label, detail FROM event ORDER BY rowid"
+    ).fetchall()
+
+
+async def test_a_mint_and_a_rotation_record_the_discord_id_of_who_did_them(reg):
+    await reg.create("tempe-roof", "Tempe roof", OWNER)
+    await reg.mint("tempe-roof", "adsb-pi", OWNER)
+    await reg.rotate("tempe-roof", "adsb-pi", OPERATOR)
+    events = _events(reg)
+    assert ("111", "mint", "tempe-roof", "adsb-pi") == events[1][:4]
+    assert ("999", "rotate", "tempe-roof", "adsb-pi") == events[2][:4]
+
+
+async def test_the_login_row_names_who_made_it_and_who_last_rotated_it(reg):
+    await reg.create("tempe-roof", "Tempe roof", OWNER)
+    await reg.mint("tempe-roof", "adsb-pi", OWNER)
+    await reg.rotate("tempe-roof", "adsb-pi", OPERATOR)
+    source = reg.store.source("tempe-roof", "adsb-pi")
+    assert (source.created_by, source.rotated_by) == ("111", "999")
+    (row,) = reg.describe(reg.get("tempe-roof"))["sources"]
+    assert (row["created_by"], row["rotated_by"]) == ("111", "999")
+
+
+async def test_an_operator_minting_for_an_owner_is_recorded_as_the_operator(reg):
+    """Would be caught: recording the location's owner instead of the actor."""
+    await reg.create("tempe-roof", "Tempe roof", OWNER)
+    await reg.mint("tempe-roof", "adsb-pi", OPERATOR)
+    assert reg.store.source("tempe-roof", "adsb-pi").created_by == "999"
+    assert _events(reg)[1][0] == "999"
+
+
+async def test_a_refused_attempt_is_logged_with_who_tried(reg):
+    await reg.create("tempe-roof", "Tempe roof", OWNER)
+    with pytest.raises(Forbidden):
+        await reg.mint("tempe-roof", "sneaky", OTHER)
+    actor_id, action, location, label, detail = _events(reg)[-1]
+    assert (actor_id, action, location, label) == ("222", "refused", "tempe-roof", "sneaky")
+    assert detail.startswith("mint: ")
+
+
+async def test_a_refused_create_of_a_taken_id_is_logged(reg):
+    await reg.create("tempe-roof", "Tempe roof", OWNER)
+    with pytest.raises(Conflict):
+        await reg.create("tempe-roof", "Mine now", OTHER)
+    assert _events(reg)[-1][:3] == ("222", "refused", "tempe-roof")
+
+
+async def test_refusals_do_not_use_up_the_mint_rate(reg):
+    await reg.create("tempe-roof", "Tempe roof", OWNER)
+    for _ in range(10):
+        with pytest.raises(NotFound):
+            await reg.rotate("tempe-roof", "missing", OWNER)
+    await reg.mint("tempe-roof", "adsb-pi", OWNER)
+
+
+def test_an_old_database_gets_the_new_columns_filled_from_its_log(tmp_path):
+    path = str(tmp_path / "old.sqlite3")
+    import sqlite3
+
+    old = sqlite3.connect(path)
+    old.executescript(
+        """
+        CREATE TABLE location (id TEXT PRIMARY KEY, display_name TEXT NOT NULL,
+            owner_id TEXT NOT NULL, owner_name TEXT NOT NULL, created_at REAL NOT NULL);
+        CREATE TABLE source (location TEXT NOT NULL REFERENCES location(id),
+            label TEXT NOT NULL, username TEXT NOT NULL UNIQUE, created_at REAL NOT NULL,
+            rotated_at REAL, PRIMARY KEY (location, label));
+        CREATE TABLE event (at REAL NOT NULL, actor_id TEXT NOT NULL, action TEXT NOT NULL,
+            location TEXT, label TEXT, detail TEXT);
+        INSERT INTO location VALUES ('tempe-roof', 'Tempe roof', '111', 'Logan', 1);
+        INSERT INTO source VALUES ('tempe-roof', 'pi', 'rf-tempe-roof-pi', 2, 4);
+        INSERT INTO event VALUES (2, '111', 'mint', 'tempe-roof', 'pi', NULL);
+        INSERT INTO event VALUES (3, '999', 'rotate', 'tempe-roof', 'pi', NULL);
+        INSERT INTO event VALUES (4, '222', 'rotate', 'tempe-roof', 'pi', NULL);
+        """
+    )
+    old.commit()
+    old.close()
+    source = Store(path).source("tempe-roof", "pi")
+    assert (source.created_by, source.rotated_by) == ("111", "222")

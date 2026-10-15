@@ -32,7 +32,17 @@ The first matching rule decides:
 | `rf/v1/<location>/status/<its own source>` | allowed |
 | `rf/v1/<location>/status/#` (any other heartbeat, and `status`) | denied |
 | `rf/v1/<location>/<kind>` | allowed |
-| anything else, and every subscribe | denied |
+| `sonoran/v1/contributors/<location>/<its own source>/inbox/+` and `.../status` | allowed |
+| anything else | denied |
+
+| Topic | Subscribe |
+|---|---|
+| `sonoran/v1/contributors/<location>/<its own source>/outbox/+` | allowed |
+| anything else | denied |
+
+The contributor topics are Sonoran's mesh jobs (Sonoran #178,
+`docs/MESH-JOBS.md`). At start the registrar writes every login's rules
+again, so a login minted before them gets them too.
 
 The registrar publishes each location's registry entry, retained, to
 `rf/v1/<location>/registry` through the admin API. It holds the display
@@ -58,7 +68,13 @@ on the RF tab. It never holds a Discord id.
   `MINTS_PER_HOUR` times an hour. An operator is not limited.
 - A location in `RESERVED_LOCATIONS` can be created by an operator only.
   Use it for a station whose login was made by hand.
-- Every change is logged in the registrar's database, with the actor.
+- Every change is logged in the registrar's database (`event`), with
+  the actor's Discord id. A refused change is logged too, as `refused`,
+  with who tried and why, such as `mint: tempe-roof is not yours`. A
+  refusal does not count towards `MINTS_PER_HOUR`.
+- Each login's row names the Discord id that minted it (`created_by`)
+  and the one that last rotated it (`rotated_by`). A database made
+  before these columns gets them filled from its event log at start.
 
 ## The broker
 
@@ -72,8 +88,10 @@ EMQX 5. The registrar needs:
   A file rule such as `{deny, all, all, ["rf/v1/#"]}` still stops every
   other login.
 
-At start the registrar adds one all-clients rule to that source, if it
-is not there: deny publish to `rf/v1/+/registry`. A login made by hand,
+At start the registrar adds two all-clients rules to that source, if
+they are not there: deny publish to `rf/v1/+/registry`, and deny
+everything under `sonoran/v1/contributors/#`. The broker allows what no
+rule names, so without the second any login could read or write jobs. A login made by hand,
 whose file rule allows `rf/v1/<station>/#`, could otherwise publish its
 own registry entry. The registrar itself publishes through the API,
 which no client rule applies to.
@@ -118,6 +136,7 @@ Errors are `{"error": "..."}` with 401, 403, 404, 409, 422, 429 or 502.
 | `MAX_SOURCES_PER_LOCATION` | | `8` |
 | `MINTS_PER_HOUR` | Mints and rotations per member. | `10` |
 | `RESERVED_LOCATIONS` | Location ids, comma separated. | empty |
+| `DISPATCHER_USERNAME` | Sonoran's dispatcher login, made by an operator. At start the registrar gives it the only right to publish jobs. | empty |
 | `LOG_LEVEL` | | `INFO` |
 
 Put it behind a reverse proxy with TLS, and do not publish its port

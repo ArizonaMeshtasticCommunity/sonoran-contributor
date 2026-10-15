@@ -1,0 +1,539 @@
+{
+  "$defs": {
+    "Heard": {
+      "description": "One node in the contributor's node list.",
+      "properties": {
+        "hops": {
+          "anyOf": [
+            {
+              "maximum": 7,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Hops"
+        },
+        "last_heard": {
+          "format": "date-time",
+          "title": "Last Heard",
+          "type": "string"
+        },
+        "node": {
+          "pattern": "^![0-9a-f]{8}$",
+          "title": "Node",
+          "type": "string"
+        }
+      },
+      "required": [
+        "node",
+        "last_heard"
+      ],
+      "title": "Heard",
+      "type": "object"
+    },
+    "Job": {
+      "description": "A job, published by Sonoran, retained, on `.../outbox/<job>`.\n\nThe contributor ignores a job whose `expires` has passed.",
+      "properties": {
+        "expires": {
+          "format": "date-time",
+          "title": "Expires",
+          "type": "string"
+        },
+        "issued": {
+          "format": "date-time",
+          "title": "Issued",
+          "type": "string"
+        },
+        "job": {
+          "pattern": "^[0-9a-f]{32}$",
+          "title": "Job",
+          "type": "string"
+        },
+        "kind": {
+          "const": "local_stats",
+          "title": "Kind",
+          "type": "string"
+        },
+        "target": {
+          "pattern": "^![0-9a-f]{8}$",
+          "title": "Target",
+          "type": "string"
+        },
+        "v": {
+          "const": 1,
+          "title": "V",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "v",
+        "job",
+        "kind",
+        "target",
+        "issued",
+        "expires"
+      ],
+      "title": "Job",
+      "type": "object"
+    },
+    "LocalStats": {
+      "description": "`LocalStats` from `meshtastic/telemetry.proto`, by its field names.\n\nEvery field is optional: an older firmware sends fewer.\n`noise_floor` (field 15, int32) is the radio's average noise floor\nin dBm, as the node measured it. It is not the theoretical floor in\n`sonoran/radio/presets.py`.",
+      "properties": {
+        "air_util_tx": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Air Util Tx"
+        },
+        "channel_utilization": {
+          "anyOf": [
+            {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Channel Utilization"
+        },
+        "heap_free_bytes": {
+          "anyOf": [
+            {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Heap Free Bytes"
+        },
+        "heap_total_bytes": {
+          "anyOf": [
+            {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Heap Total Bytes"
+        },
+        "noise_floor": {
+          "anyOf": [
+            {
+              "maximum": 2147483647,
+              "minimum": -2147483648,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Noise Floor"
+        },
+        "num_online_nodes": {
+          "anyOf": [
+            {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Num Online Nodes"
+        },
+        "num_packets_rx": {
+          "anyOf": [
+            {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Num Packets Rx"
+        },
+        "num_packets_rx_bad": {
+          "anyOf": [
+            {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Num Packets Rx Bad"
+        },
+        "num_packets_tx": {
+          "anyOf": [
+            {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Num Packets Tx"
+        },
+        "num_rx_dupe": {
+          "anyOf": [
+            {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Num Rx Dupe"
+        },
+        "num_total_nodes": {
+          "anyOf": [
+            {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Num Total Nodes"
+        },
+        "num_tx_dropped": {
+          "anyOf": [
+            {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Num Tx Dropped"
+        },
+        "num_tx_relay": {
+          "anyOf": [
+            {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Num Tx Relay"
+        },
+        "num_tx_relay_canceled": {
+          "anyOf": [
+            {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Num Tx Relay Canceled"
+        },
+        "uptime_seconds": {
+          "anyOf": [
+            {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Uptime Seconds"
+        }
+      },
+      "title": "LocalStats",
+      "type": "object"
+    },
+    "Result": {
+      "description": "The result of one job, from the contributor, on `.../inbox/<job>`.",
+      "properties": {
+        "detail": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Detail"
+        },
+        "hops": {
+          "anyOf": [
+            {
+              "maximum": 7,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Hops"
+        },
+        "job": {
+          "pattern": "^[0-9a-f]{32}$",
+          "title": "Job",
+          "type": "string"
+        },
+        "kind": {
+          "const": "local_stats",
+          "title": "Kind",
+          "type": "string"
+        },
+        "local_stats": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LocalStats"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "location": {
+          "pattern": "^[a-z0-9-]{3,32}$",
+          "title": "Location",
+          "type": "string"
+        },
+        "outcome": {
+          "enum": [
+            "ok",
+            "no_reply",
+            "refused",
+            "error"
+          ],
+          "title": "Outcome",
+          "type": "string"
+        },
+        "received": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Received"
+        },
+        "rx_rssi": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rx Rssi"
+        },
+        "rx_snr": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rx Snr"
+        },
+        "sent": {
+          "format": "date-time",
+          "title": "Sent",
+          "type": "string"
+        },
+        "source": {
+          "pattern": "^[a-z0-9][a-z0-9-]{0,15}$",
+          "title": "Source",
+          "type": "string"
+        },
+        "target": {
+          "pattern": "^![0-9a-f]{8}$",
+          "title": "Target",
+          "type": "string"
+        },
+        "v": {
+          "const": 1,
+          "title": "V",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "v",
+        "job",
+        "location",
+        "source",
+        "kind",
+        "target",
+        "outcome",
+        "sent"
+      ],
+      "title": "Result",
+      "type": "object"
+    },
+    "Status": {
+      "description": "The heartbeat, published retained on `.../status`.",
+      "properties": {
+        "heard": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Heard"
+          },
+          "maxItems": 250,
+          "title": "Heard",
+          "type": "array"
+        },
+        "kinds": {
+          "default": [],
+          "items": {
+            "const": "local_stats",
+            "type": "string"
+          },
+          "title": "Kinds",
+          "type": "array"
+        },
+        "location": {
+          "pattern": "^[a-z0-9-]{3,32}$",
+          "title": "Location",
+          "type": "string"
+        },
+        "mesh_node": {
+          "anyOf": [
+            {
+              "pattern": "^![0-9a-f]{8}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mesh Node"
+        },
+        "sent": {
+          "format": "date-time",
+          "title": "Sent",
+          "type": "string"
+        },
+        "source": {
+          "pattern": "^[a-z0-9][a-z0-9-]{0,15}$",
+          "title": "Source",
+          "type": "string"
+        },
+        "v": {
+          "const": 1,
+          "title": "V",
+          "type": "integer"
+        },
+        "version": {
+          "anyOf": [
+            {
+              "maxLength": 64,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Version"
+        }
+      },
+      "required": [
+        "v",
+        "location",
+        "source",
+        "sent"
+      ],
+      "title": "Status",
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Topics under sonoran/v1/contributors/<location>/<source>/. Sonoran publishes a Job, retained, to outbox/<job>, and clears it with an empty retained message. The contributor publishes a Result to inbox/<job> and its Status, retained, to status. See docs/design/contributors.md. Generated from sonoran/contrib/schema.py.",
+  "else": {
+    "else": {
+      "$ref": "#/$defs/Status"
+    },
+    "if": {
+      "required": [
+        "outcome"
+      ]
+    },
+    "then": {
+      "$ref": "#/$defs/Result"
+    }
+  },
+  "if": {
+    "required": [
+      "expires"
+    ]
+  },
+  "then": {
+    "$ref": "#/$defs/Job"
+  },
+  "title": "sonoran-contributor message, version 1"
+}

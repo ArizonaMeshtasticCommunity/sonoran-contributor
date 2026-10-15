@@ -6,11 +6,17 @@ before you write code.
 
 ## 1. What this repository is
 
-`rf-agent`: a small program that runs beside a member's SDR, reads the
-decoder they already run, thins what it hears, and publishes it over
-MQTT to the community broker. Sonoran stores it and draws it on its RF
-tab. Sonoran is a separate repository,
-`ArizonaMeshtasticCommunity/beta-sonoran`.
+`sonoran-contributor`, formerly `rf-map`. It runs at a member's site and
+does two things:
+
+- `rf-agent`: reads the decoder beside a member's SDR, thins what it
+  hears, and publishes it over MQTT to the community broker. Sonoran
+  stores it and draws it on its RF tab.
+- Mesh jobs (`src/sonoran_contributor`, Sonoran #178): takes jobs from
+  Sonoran over MQTT, does them with the member's own Meshtastic node,
+  and sends the results back. See `docs/MESH-JOBS.md`.
+
+Sonoran is a separate repository, `ArizonaMeshtasticCommunity/beta-sonoran`.
 
 | Lives here | Lives in Sonoran |
 |---|---|
@@ -19,10 +25,13 @@ tab. Sonoran is a separate repository,
 | Design sections 3 and 4 | Design sections 5 to 7 |
 | A copy of the contract | The source of the contract, `sonoran/rf/schema.py` |
 | `rf-registrar`, the broker logins of stations (`docs/REGISTRAR.md`) | The registry entries it publishes, stored per location |
+| The mesh job worker, and a copy of its contract | `sonoran-contrib`, the dispatcher, the `local_stats` table, `sonoran/contrib/schema.py` |
 
 ## 2. The contract
 
-`schema/rf-message-v1.schema.json` is what every message must satisfy.
+`schema/rf-message-v1.schema.json` is what every RF message must
+satisfy, and `schema/contributor-message-v1.schema.json` every mesh job
+message. Both are copied from Sonoran the same way.
 It is generated from Sonoran's `sonoran/rf/schema.py`. Never edit it by
 hand here.
 
@@ -75,6 +84,14 @@ check this, not only the examples.
   the heartbeat goes to `rf/v1/<station>/status/<source>`.
 - **The registrar never stores a password**, and never logs one. It is
   in one answer, once.
+- **Mesh jobs do only what a job kind allows.** The node adapter
+  (`node.py`) sends one packet type: a TELEMETRY_APP request for
+  LocalStats. Never an admin message, never a setting. A test checks the
+  file for it. A new job kind is a contract change in Sonoran first, and
+  a member opts in to it with `MESH_JOBS`.
+- **Every number names its source**, as in Sonoran (its AGENTS.md
+  3A.2): the 300 s wait is the Meshtastic library's own timeout, and the
+  250 heard nodes are the firmware's largest node list.
 - **Never exit on bad input.** A bad frame is counted and skipped. A
   decoder or broker that goes away is retried with backoff.
 

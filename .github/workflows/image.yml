@@ -1,7 +1,8 @@
 name: Image
 
-# Publishes ghcr.io/arizonameshtasticcommunity/rf-agent, rf-sweep and
-# rf-registrar.
+# Publishes ghcr.io/arizonameshtasticcommunity/sonoran-contributor,
+# rf-agent (the same image, under its old name, for stations that pull
+# `rf-agent:1`), rf-sweep and rf-registrar.
 #
 # A tag `v1.2.3` publishes `1.2.3`, `1.2` and `1`, so a member who runs
 # `rf-agent:1` gets every compatible release. `main` publishes `main`.
@@ -21,6 +22,9 @@ jobs:
     strategy:
       matrix:
         include:
+          - name: sonoran-contributor
+            file: Dockerfile
+            platforms: linux/amd64,linux/arm64,linux/arm/v7
           - name: rf-agent
             file: Dockerfile
             platforms: linux/amd64,linux/arm64,linux/arm/v7

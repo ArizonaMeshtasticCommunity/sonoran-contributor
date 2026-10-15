@@ -23,6 +23,16 @@ ALL_RULES = "authorization/sources/built_in_database/rules/all"
 # publishes through the API, which no client rule applies to.
 REGISTRY_GUARD = {"permission": "deny", "action": "publish", "topic": "rf/v1/+/registry"}
 
+# Sonoran's mesh jobs (Sonoran #178). Each login gets its own subtree in
+# `rules_for`; the dispatcher gets `dispatcher_rules`. The broker allows
+# what no rule names, so every other client is kept out by this. A
+# login's own rules are checked before the all-clients rules: that is
+# why a login made by hand bypasses REGISTRY_GUARD, and needs its own
+# registry deny (docs/REGISTRAR.md).
+CONTRIB_ROOT = "sonoran/v1/contributors"
+CONTRIB_GUARD = {"permission": "deny", "action": "all", "topic": f"{CONTRIB_ROOT}/#"}
+ALL_CLIENT_GUARDS = [REGISTRY_GUARD, CONTRIB_GUARD]
+
 
 class BrokerError(RuntimeError):
     """The broker refused a request, or could not be reached."""
@@ -48,11 +58,30 @@ def rules_for(station: str, source: str) -> list[dict[str, str]]:
     also matches `status` itself.
     """
     base = f"rf/v1/{station}"
+    own = f"{CONTRIB_ROOT}/{station}/{source}"
     return [
         {"permission": "deny", "action": "publish", "topic": f"{base}/registry"},
         {"permission": "allow", "action": "publish", "topic": f"{base}/status/{source}"},
         {"permission": "deny", "action": "publish", "topic": f"{base}/status/#"},
         {"permission": "allow", "action": "publish", "topic": f"{base}/+"},
+        # Mesh jobs: read its own jobs, answer them, send its heartbeat.
+        {"permission": "allow", "action": "subscribe", "topic": f"{own}/outbox/+"},
+        {"permission": "allow", "action": "publish", "topic": f"{own}/inbox/+"},
+        {"permission": "allow", "action": "publish", "topic": f"{own}/status"},
+        {"permission": "deny", "action": "all", "topic": "#"},
+    ]
+
+
+def dispatcher_rules() -> list[dict[str, str]]:
+    """The rules of Sonoran's dispatcher login, `sonoran-contrib`.
+
+    The only login that may publish a job. It reads every result and
+    heartbeat, and nothing outside the contributor tree.
+    """
+    return [
+        {"permission": "allow", "action": "publish", "topic": f"{CONTRIB_ROOT}/+/+/outbox/+"},
+        {"permission": "allow", "action": "subscribe", "topic": f"{CONTRIB_ROOT}/+/+/inbox/+"},
+        {"permission": "allow", "action": "subscribe", "topic": f"{CONTRIB_ROOT}/+/+/status"},
         {"permission": "deny", "action": "all", "topic": "#"},
     ]
 
@@ -119,21 +148,27 @@ class Emqx:
         return len(clients)
 
     async def guard_registry(self) -> bool:
-        """Make sure the all-clients rule that guards the registry is there.
+        """Make sure the all-clients guards are there: the registry, and the
+        contributor tree (Sonoran #178).
 
-        Returns True when it had to be added. The other all-client rules
+        Returns True when one had to be added. The other all-client rules
         are kept as they are.
         """
         found = await self._call("GET", ALL_RULES)
         rules = list((found or {}).get("rules", []))
-        if any(
-            r.get("topic") == REGISTRY_GUARD["topic"]
-            and r.get("permission") == "deny"
-            and r.get("action") in ("publish", "all")
-            for r in rules
-        ):
+        missing = [
+            guard
+            for guard in ALL_CLIENT_GUARDS
+            if not any(
+                r.get("topic") == guard["topic"]
+                and r.get("permission") == "deny"
+                and r.get("action") in (guard["action"], "all")
+                for r in rules
+            )
+        ]
+        if not missing:
             return False
-        await self._call("POST", ALL_RULES, {"rules": [REGISTRY_GUARD, *rules]})
+        await self._call("POST", ALL_RULES, {"rules": [*missing, *rules]})
         return True
 
     async def publish_retained(self, topic: str, payload: bytes) -> None:

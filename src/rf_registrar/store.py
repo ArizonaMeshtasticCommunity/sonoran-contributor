@@ -56,6 +56,13 @@ class Source:
     username: str
     created_at: float
     rotated_at: float | None
+    # The Discord ids of who minted the login and who last rotated it.
+    # None for a login whose event was never logged.
+    created_by: str | None = None
+    rotated_by: str | None = None
+
+
+SOURCE_COLUMNS = "location, label, username, created_at, rotated_at, created_by, rotated_by"
 
 
 class Store:
@@ -65,6 +72,26 @@ class Store:
         self.db = sqlite3.connect(path, isolation_level=None)
         self.db.execute("PRAGMA foreign_keys = ON")
         self.db.executescript(SCHEMA)
+        self._add_actor_columns()
+
+    def _add_actor_columns(self) -> None:
+        """Give a database made before them `created_by` and `rotated_by`.
+
+        They are filled from the event log, which has held the actor of
+        every mint and rotation from the start.
+        """
+        have = {row[1] for row in self.db.execute("PRAGMA table_info(source)")}
+        for column, action in (("created_by", "mint"), ("rotated_by", "rotate")):
+            if column in have:
+                continue
+            self.db.execute(f"ALTER TABLE source ADD COLUMN {column} TEXT")
+            self.db.execute(
+                f"UPDATE source SET {column} = ("
+                "SELECT actor_id FROM event e WHERE e.action = ? "
+                "AND e.location = source.location AND e.label = source.label "
+                "ORDER BY e.at DESC, e.rowid DESC LIMIT 1)",
+                (action,),
+            )
 
     def location(self, location_id: str) -> Location | None:
         row = self.db.execute(
@@ -106,30 +133,36 @@ class Store:
         return [
             Source(*row)
             for row in self.db.execute(
-                "SELECT location, label, username, created_at, rotated_at FROM source "
-                "WHERE location = ? ORDER BY label",
+                f"SELECT {SOURCE_COLUMNS} FROM source WHERE location = ? ORDER BY label",
                 (location_id,),
             )
         ]
 
     def source(self, location_id: str, label: str) -> Source | None:
         row = self.db.execute(
-            "SELECT location, label, username, created_at, rotated_at FROM source "
-            "WHERE location = ? AND label = ?",
+            f"SELECT {SOURCE_COLUMNS} FROM source WHERE location = ? AND label = ?",
             (location_id, label),
         ).fetchone()
         return Source(*row) if row else None
 
     def add_source(self, source: Source) -> None:
         self.db.execute(
-            "INSERT INTO source VALUES (?, ?, ?, ?, ?)",
-            (source.location, source.label, source.username, source.created_at, source.rotated_at),
+            f"INSERT INTO source ({SOURCE_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                source.location,
+                source.label,
+                source.username,
+                source.created_at,
+                source.rotated_at,
+                source.created_by,
+                source.rotated_by,
+            ),
         )
 
-    def rotated(self, location_id: str, label: str, at: float) -> None:
+    def rotated(self, location_id: str, label: str, at: float, by: str) -> None:
         self.db.execute(
-            "UPDATE source SET rotated_at = ? WHERE location = ? AND label = ?",
-            (at, location_id, label),
+            "UPDATE source SET rotated_at = ?, rotated_by = ? WHERE location = ? AND label = ?",
+            (at, by, location_id, label),
         )
 
     def remove_source(self, location_id: str, label: str) -> None:
