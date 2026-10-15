@@ -353,3 +353,40 @@ def test_the_start_line_says_when_the_node_has_not_told_its_number() -> None:
     assert connected_line(_Linked(None, 0)) == (
         "mesh jobs: connected to node (number not known yet), 0 nodes in its list"
     )
+
+
+# --- RF is not needed for mesh jobs (README, docs/MESH-JOBS.md) ---------
+
+
+async def test_mesh_jobs_run_with_no_rf_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    from rf_agent import agent as rf
+    from sonoran_contributor import main, worker
+
+    started: list[str] = []
+
+    async def fake_mesh(config, stop) -> None:  # type: ignore[no-untyped-def]
+        started.append(f"mesh {config.location}/{config.source}")
+
+    async def fake_rf(config, stop) -> None:  # type: ignore[no-untyped-def]
+        started.append("rf")
+
+    monkeypatch.setattr(worker, "run", fake_mesh)
+    monkeypatch.setattr(rf, "main", fake_rf)
+    for key in list(main.os.environ):
+        monkeypatch.delenv(key)
+    for key, value in ENV.items():
+        monkeypatch.setenv(key, value)
+    assert "SOURCES" not in main.os.environ
+    assert await main._main() == 0
+    assert started == ["mesh phoenix/pi5"]
+
+
+async def test_with_neither_it_stops_and_says_so(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from sonoran_contributor import main
+
+    for key in list(main.os.environ):
+        monkeypatch.delenv(key)
+    assert await main._main() == 2
+    assert "nothing to do" in capsys.readouterr().err

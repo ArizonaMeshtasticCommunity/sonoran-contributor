@@ -111,7 +111,10 @@ docs, "meshtasticd usage"). Use `MESH_NODE: tcp://<host>`.
 
 Use the login the Discord bot minted for this Pi:
 `/contributor token mint <location> <source>`. One login does RF and mesh
-jobs. A Pi with mesh jobs only needs no `SOURCES`.
+jobs. **RF is not needed:** a Pi with mesh jobs only sets no
+`SOURCES`, no station position, and runs no SDR or `rf-sweep`. It needs
+`STATION_ID`, `SOURCE_ID`, `BROKER_URL`, `BROKER_USER`, `BROKER_PASS`
+and `MESH_NODE`.
 
 ### 4. Check that it works
 

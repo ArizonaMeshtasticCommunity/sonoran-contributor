@@ -139,8 +139,18 @@ A node measures its own radio, such as its noise floor, and keeps it in
 for it, to the node that asked, as a direct message. Sonoran has no
 node on the mesh to ask with, but your node can ask (Sonoran #178).
 
-Turn it on with `MESH_NODE`, beside the settings above. `SOURCE_ID` is
-required. The same login does both RF and mesh jobs.
+Turn it on with `MESH_NODE`. **RF is not needed.** A site with no SDR
+runs mesh jobs only:
+
+| Setting | Mesh jobs only | RF only | Both |
+|---|:-:|:-:|:-:|
+| `STATION_ID`, `BROKER_URL`, `BROKER_USER`, `BROKER_PASS` | yes | yes | yes |
+| `SOURCE_ID` | **required** | optional | **required** |
+| `MESH_NODE` | yes | no | yes |
+| `SOURCES`, `STATION_LAT`/`LON`, an SDR, `rf-sweep` | no | yes | yes |
+
+With neither `SOURCES` nor `MESH_NODE`, it stops at start and says so.
+The same login does both RF and mesh jobs.
 
 ```yaml
     environment:
