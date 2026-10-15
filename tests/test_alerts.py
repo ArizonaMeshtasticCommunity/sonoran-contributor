@@ -64,7 +64,7 @@ async def test_alerts_close_together_go_out_as_one_message():
     await alerter.flush()  # nothing new: nothing sent
     ((url, body),) = posts
     assert url == HOOK
-    assert body["content"].startswith("**rf-agent test-site/pi**\n🔴 broker")
+    assert body["content"].startswith("**sonoran-contributor test-site/pi**\n🔴 broker")
     assert "adsb=beast" in body["content"]
     assert body["allowed_mentions"] == {"parse": []}
 

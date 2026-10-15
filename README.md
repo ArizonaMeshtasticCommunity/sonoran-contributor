@@ -7,7 +7,7 @@ Local receivers · mesh jobs on your own node · MQTT to one broker · stored an
 
 [![Contract](https://img.shields.io/badge/contract-v1-EA6A3A?style=flat-square)](schema/rf-message-v1.schema.json)
 [![Phase](https://img.shields.io/badge/phases-1--5%20built-2A6DB2?style=flat-square)](#-roadmap)
-[![CI](https://github.com/ArizonaMeshtasticCommunity/rf-map/actions/workflows/ci.yml/badge.svg)](https://github.com/ArizonaMeshtasticCommunity/rf-map/actions/workflows/ci.yml)
+[![CI](https://github.com/ArizonaMeshtasticCommunity/sonoran-contributor/actions/workflows/ci.yml/badge.svg)](https://github.com/ArizonaMeshtasticCommunity/sonoran-contributor/actions/workflows/ci.yml)
 [![Sources](https://img.shields.io/badge/sources-local%20only-3776AB?style=flat-square)](#-what-it-reads)
 [![Sonoran](https://img.shields.io/badge/stored%20by-Sonoran-EA6A3A?style=flat-square)](https://github.com/ArizonaMeshtasticCommunity/beta-sonoran)
 
@@ -18,13 +18,13 @@ Local receivers · mesh jobs on your own node · MQTT to one broker · stored an
 `sonoran-contributor` runs at a member's site. It does two things, and
 you turn on either or both:
 
-- **RF**: the RF agent (`rf-agent`, below) reads the decoders beside
+- **RF**: the RF agent (below) reads the decoders beside
   your SDR.
 - **Mesh jobs**: it asks nodes on the mesh for what they do not
   broadcast, with your own Meshtastic node, for Sonoran. The first job
   is the measured noise floor. See [Mesh jobs](#-mesh-jobs-for-sonoran).
 
-`rf-agent` runs beside a member's SDR. It reads the decoder they already
+The RF agent runs beside a member's SDR. It reads the decoder they already
 run, thins what it hears, and publishes it to the community broker.
 Sonoran stores it and draws it on its **RF** tab: aircraft first, then
 APRS, radiosondes, weather sensors, and the 902 to 928 MHz band the mesh
@@ -53,19 +53,19 @@ member's site (one or more SDRs)                       Sonoran host
 ┌──────────────────────────────────────┐
 │ readsb ──:30005──┐                   │
 │ dump978 ─:30979──┤                   │   MQTT over TLS
-│ direwolf ─:8001──┼──► rf-agent ──────┼──────────────► broker
+│ direwolf ─:8001──┼──► contributor ───┼──────────────► broker
 │ rtl_433 ──UDP────┤   (read-only)     │                  │
 │ auto_rx ──UDP────┘                   │                  ▼
 └──────────────────────────────────────┘      sonoran-rf-ingest ──► RF tab
 ```
 
-A USB SDR can be opened by one program at a time. `rf-agent` never opens
+A USB SDR can be opened by one program at a time. The contributor never opens
 one: it connects to the output the decoder already serves, which takes
 several readers at once.
 
 ## 📥 What it reads
 
-| Source | Decoder you already run | What rf-agent reads | Band | Phase |
+| Source | Decoder you already run | What the contributor reads | Band | Phase |
 |--------|-------------------------|---------------------|:----:|:-----:|
 | ADS-B | `readsb`, `dump1090-fa` | Beast on TCP 30005, or `aircraft.json` | 1090 MHz | **1** |
 | UAT | `dump978-fa` | JSON on TCP 30979 | 978 MHz | **1** |
@@ -82,7 +82,7 @@ privileges, no listening ports.
 
 ```yaml
 services:
-  rf-agent:
+  sonoran-contributor:
     image: ghcr.io/arizonameshtasticcommunity/sonoran-contributor:1
     restart: unless-stopped
     logging:
@@ -352,8 +352,8 @@ services:
     environment:
       SWEEP_SERIAL: SWEEP915
       SWEEP_GAIN_DB: "32.8"
-  rf-agent:
-    image: ghcr.io/arizonameshtasticcommunity/rf-agent:main
+  sonoran-contributor:
+    image: ghcr.io/arizonameshtasticcommunity/sonoran-contributor:main
     restart: unless-stopped
     logging:
       options:

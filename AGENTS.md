@@ -6,7 +6,7 @@ before you write code.
 
 ## 1. What this repository is
 
-`sonoran-contributor`, formerly `rf-map`. It runs at a member's site and
+`sonoran-contributor` (the repository was `rf-map` until 2026-10-15). It runs at a member's site and
 does two things:
 
 - `rf-agent`: reads the decoder beside a member's SDR, thins what it

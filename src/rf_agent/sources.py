@@ -204,7 +204,7 @@ def fetch(url: str, timeout: float = 5.0) -> bytes:
     if urlsplit(url).scheme == "file":
         with open(urlsplit(url).path, "rb") as fh:
             return fh.read(MAX_JSON_BYTES)
-    request = urllib.request.Request(url, headers={"User-Agent": "rf-agent"})
+    request = urllib.request.Request(url, headers={"User-Agent": "sonoran-contributor"})
     with urllib.request.urlopen(request, timeout=timeout) as response:
         return response.read(MAX_JSON_BYTES)
 

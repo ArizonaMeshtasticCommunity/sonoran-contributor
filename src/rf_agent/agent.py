@@ -136,7 +136,7 @@ async def main(config: Config, stop: asyncio.Event | None = None) -> None:
                 loop.add_signal_handler(sig, stop.set)
 
     logger.info(
-        "rf-agent %s, station %s, sources: %s",
+        "sonoran-contributor %s (RF), station %s, sources: %s",
         __version__,
         config.station_id,
         ", ".join(s.name for s in config.sources),

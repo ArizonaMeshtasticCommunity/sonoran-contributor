@@ -46,7 +46,7 @@ def post_webhook(url: str, payload: dict[str, object]) -> float | None:
     request = urllib.request.Request(
         url,
         data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json", "User-Agent": "rf-agent"},
+        headers={"Content-Type": "application/json", "User-Agent": "sonoran-contributor"},
         method="POST",
     )
     try:
@@ -89,7 +89,7 @@ class Alerter:
         lines = list(self.queue)
         if self.dropped:
             lines.insert(0, f"({self.dropped} older alerts dropped while Discord was away)")
-        head = f"**rf-agent {self.label}**\n"
+        head = f"**sonoran-contributor {self.label}**\n"
         body = ""
         for line in lines:
             if len(head) + len(body) + len(line) + 1 > MAX_CHARS:

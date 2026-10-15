@@ -40,8 +40,8 @@ RUN pip install --no-deps . && rm -rf /app/src
 
 # No privileges, no listening ports. The contributor only connects out:
 # to its decoders, to the member's own node, and to the broker over TLS.
-RUN useradd --system --no-create-home --uid 10001 rf-agent
-USER rf-agent
+RUN useradd --system --no-create-home --uid 10001 contributor
+USER contributor
 
 # Runs the RF agent when SOURCES is set, mesh jobs when MESH_NODE is set,
 # or both. A station that ran `rf-agent` runs the same with this.
