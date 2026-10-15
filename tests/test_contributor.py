@@ -390,3 +390,65 @@ async def test_with_neither_it_stops_and_says_so(
         monkeypatch.delenv(key)
     assert await main._main() == 2
     assert "nothing to do" in capsys.readouterr().err
+
+
+# --- The node goes away (audit F1) ---------------------------------------
+
+
+class _BrokenLink:
+    async def request_local_stats(self, target: int, wait_s: float) -> Reply | None:
+        raise OSError(104, "Connection reset by peer")
+
+
+async def test_a_node_that_goes_away_is_an_error_result_not_a_crash() -> None:
+    """The library raises OSError on a dead socket (tcp_interface.py 136-140)."""
+    result = await _do(_job(), _BrokenLink())  # type: ignore[arg-type]
+    assert result is not None
+    assert result["outcome"] == "error"
+    assert "Connection reset" in result["detail"]
+    assert_valid(result)
+
+
+class _FakeInterface:
+    def __init__(self, fail: bool) -> None:
+        self.fail = fail
+        self.closed = False
+
+    def sendData(self, *args: Any, **kwargs: Any) -> None:  # noqa: N802 - the library's name
+        if self.fail:
+            raise OSError(32, "Broken pipe")
+
+    def close(self) -> None:
+        self.closed = True
+
+
+async def test_the_link_drops_a_dead_interface_and_opens_a_new_one() -> None:
+    from sonoran_contributor.node import MeshtasticLink
+
+    opened: list[_FakeInterface] = []
+
+    def fake_open() -> _FakeInterface:
+        interface = _FakeInterface(fail=not opened)
+        opened.append(interface)
+        return interface
+
+    link = MeshtasticLink("node.example", 4403, None)
+    link._open = fake_open  # type: ignore[method-assign]
+    with pytest.raises(LinkError, match="Broken pipe"):
+        await link.request_local_stats(1, 0.01)
+    assert link.interface is None and opened[0].closed
+    # The next job opens a new connection, and this one does not fail.
+    assert await link.request_local_stats(1, 0.01) is None
+    assert len(opened) == 2
+
+
+# --- One login for RF and mesh jobs (audit F2) ---------------------------
+
+
+def test_without_broker_user_mesh_jobs_use_the_same_login_as_rf() -> None:
+    from rf_agent.config import load as load_rf
+    from sonoran_contributor.config import load_mesh
+
+    env = {k: v for k, v in ENV.items() if k != "BROKER_USER"}
+    rf = load_rf({**env, "SOURCES": "adsb=beast://readsb:30005"})
+    assert load_mesh(env).broker_user == rf.broker_user
