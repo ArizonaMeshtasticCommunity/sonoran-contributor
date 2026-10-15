@@ -46,6 +46,30 @@ ESP32-S3 with 16 MB flash (`src/mesh/mesh-pb-constants.h`,
 meshtastic/firmware), the largest list a radio keeps. Sonoran uses it
 to choose the contributor with the fewest hops to a target.
 
+## Who decides what
+
+**You decide, on your Pi:**
+
+- Whether it does RF (`SOURCES`), mesh jobs (`MESH_NODE`), or both.
+- Which node it uses (`MESH_NODE`).
+- Which job kinds it does (`MESH_JOBS`, `local_stats` by default). The
+  heartbeat tells Sonoran this list, and Sonoran sends no other kind. A
+  job of another kind is answered `refused`, and your node is not used.
+- When it stops: stop the container, or remove `MESH_NODE`.
+
+**Sonoran decides:** which node your Pi is asked to read, and when. It
+chooses from the nodes your node hears, at most once per round for each
+node (12 hours for a router, 1 hour for other roles), and one job at a
+time for your Pi.
+
+**You cannot** choose the nodes or make a job: your login cannot publish
+to an outbox. **Sonoran cannot** start RF on your Pi, send a kind you
+did not allow, or have your node do anything but the one request.
+
+**The operator** can stop all jobs (the `contrib` service in Sonoran),
+or revoke your login, which stops RF and jobs together. There is no
+switch yet to pause only your jobs.
+
 ## Set up your node
 
 You need a Meshtastic node that is on the mesh and that the contributor
