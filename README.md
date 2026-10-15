@@ -179,7 +179,9 @@ What it never does:
 
 The topics and messages are in
 [`schema/contributor-message-v1.schema.json`](schema/contributor-message-v1.schema.json),
-copied from Sonoran. See [docs/MESH-JOBS.md](docs/MESH-JOBS.md).
+copied from Sonoran. **To set up your node** (network, USB or
+`meshtasticd`), and to check that it works, see
+[docs/MESH-JOBS.md](docs/MESH-JOBS.md#set-up-your-node).
 
 ## ⚙️ Configuration
 
