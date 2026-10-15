@@ -95,7 +95,9 @@ the sonoran host.
 ## 3. `rf-agent`
 
 A separate repository and image, because it runs on members' machines,
-usually a Raspberry Pi. Proposed: `ArizonaMeshtasticCommunity/rf-agent`.
+usually a Raspberry Pi. It is `ArizonaMeshtasticCommunity/sonoran-contributor`
+(the repository was `rf-map` until 2026-10-15), image `sonoran-contributor`.
+`rf-agent` is now its RF part; it also does mesh jobs (`docs/MESH-JOBS.md`).
 
 ### 3.1 It never touches the SDR
 
@@ -135,13 +137,13 @@ privileges, no listening ports. Their other feeds are not affected.
 ```yaml
 services:
   rf-agent:
-    image: ghcr.io/arizonameshtasticcommunity/rf-agent:1
+    image: ghcr.io/arizonameshtasticcommunity/sonoran-contributor:main
     restart: unless-stopped
     environment:
       STATION_ID: tempe-roof
       BROKER_URL: mqtts://broker.example:8883
       BROKER_USER: tempe-roof
-      BROKER_PASS: ${RF_AGENT_PASS}
+      BROKER_PASS: ${CONTRIBUTOR_PASS}
       SOURCES: adsb=beast://readsb:30005,uat=tcp://dump978:30979
       STATION_LAT: "33.42"
       STATION_LON: "-111.94"

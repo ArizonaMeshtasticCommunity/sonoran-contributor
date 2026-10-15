@@ -97,7 +97,7 @@ with its own WiFi or Ethernet settings, then give it a fixed address.
 ```yaml
 services:
   sonoran-contributor:
-    image: ghcr.io/arizonameshtasticcommunity/sonoran-contributor:1
+    image: ghcr.io/arizonameshtasticcommunity/sonoran-contributor:main
     restart: unless-stopped
     environment:
       STATION_ID: tempe-roof
@@ -164,6 +164,24 @@ while it lasts:
 | `Meshtastic node: ... Connection refused`, or a timeout | The address, the port, and that the radio's network is on |
 | `broker: ...` | `BROKER_URL`, `BROKER_USER`, `BROKER_PASS` |
 | `job ...: no_reply` again and again | The target does not answer your node. Sonoran gives the job to the next contributor. |
+
+## When something restarts
+
+- **Your node** goes away (rebooted, unplugged, off the network): the job
+  that was running ends in `error`, with the reason, and Sonoran gives it
+  to someone else. The next job opens a new connection. RF keeps
+  running. The Meshtastic library also reconnects a TCP connection on
+  its own.
+- **The broker**: the contributor reconnects with backoff, up to a minute
+  apart. Jobs that expired meanwhile are ignored.
+- **Sonoran**: nothing to do. A job that expires is given again.
+
+## Upgrading from `rf-agent`
+
+The image is the same. Change `rf-agent` to `sonoran-contributor` in the
+image name, and keep your settings. RF runs as before. Add `MESH_NODE`
+only if you want mesh jobs. The `rf-agent` image name and command still
+work.
 
 ## The node, in detail
 
