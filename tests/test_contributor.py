@@ -324,3 +324,32 @@ def test_settings_that_cannot_work_are_refused(change: dict[str, str]) -> None:
 
     with pytest.raises(ConfigError):
         load_mesh({**ENV, **change})
+
+
+# --- The log line that says the node is reached (docs/MESH-JOBS.md 4) ---
+
+
+class _Linked:
+    def __init__(self, me: int | None, nodes: int) -> None:
+        self.me, self.count = me, nodes
+
+    def my_node(self) -> int | None:
+        return self.me
+
+    def nodes(self) -> list[tuple[int, int | None, float | None]]:
+        return [(n, 1, NOW.timestamp()) for n in range(self.count)]
+
+
+def test_the_start_line_names_the_node_and_its_list() -> None:
+    from sonoran_contributor.worker import connected_line
+
+    line = connected_line(_Linked(0xA1B2C3D4, 57))
+    assert line == "mesh jobs: connected to node !a1b2c3d4, 57 nodes in its list"
+
+
+def test_the_start_line_says_when_the_node_has_not_told_its_number() -> None:
+    from sonoran_contributor.worker import connected_line
+
+    assert connected_line(_Linked(None, 0)) == (
+        "mesh jobs: connected to node (number not known yet), 0 nodes in its list"
+    )
