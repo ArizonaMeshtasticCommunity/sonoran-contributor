@@ -136,8 +136,8 @@ logs to journald or syslog instead, cap that there, such as
 
 A node measures its own radio, such as its noise floor, and keeps it in
 `LocalStats`. It does not send that over the mesh. It answers a request
-for it, to the node that asked, as a direct message. So Sonoran cannot
-see it, but your node can ask (Sonoran #178).
+for it, to the node that asked, as a direct message. Sonoran has no
+node on the mesh to ask with, but your node can ask (Sonoran #178).
 
 Turn it on with `MESH_NODE`, beside the settings above. `SOURCE_ID` is
 required. The same login does both RF and mesh jobs.
@@ -167,9 +167,14 @@ What it never does:
 - It never sends an admin message, and never changes a setting on your
   node or any other.
 - It does only the job kinds in `MESH_JOBS`.
-- It does one job at a time. Sonoran asks a router no more often than
-  the firmware's own telemetry interval: 12 hours for a router, 1 hour
-  for other roles.
+- It does one job at a time.
+- Sonoran starts at most one round for a node in the firmware's own
+  telemetry interval: 12 hours for a router, 1 hour for other roles.
+  If your node gets no answer, Sonoran may give the same node to
+  another contributor in that round. So a node that does not answer
+  can be asked once by each contributor that hears it.
+- One job is one request and one answer. Every node between relays
+  each of them, so a node 3 hops away costs about 6 transmissions.
 - It opens no port. It connects out to your node and to the broker.
 
 The topics and messages are in
