@@ -1,6 +1,6 @@
 [project]
-name = "rf-agent"
-version = "0.6.0"
+name = "sonoran-contributor"
+version = "0.6.1"
 description = "Reads the decoders beside a member's SDR and publishes what they hear to the community broker."
 readme = "README.md"
 requires-python = ">=3.13"
@@ -28,6 +28,7 @@ dev = [
 ]
 
 [project.scripts]
+# The old name of the RF agent, kept for compose files that call it.
 rf-agent = "rf_agent.agent:run"
 sonoran-contributor = "sonoran_contributor.main:run"
 rf-sweep = "rf_agent.sweep:run"

@@ -26,6 +26,7 @@ from sonoran_contributor.config import MeshConfig
 from sonoran_contributor.contract import (
     Job,
     inbox_topic,
+    node_id,
     outbox_filter,
     parse_job,
     status_message,
@@ -41,6 +42,13 @@ def _version() -> str:
     from rf_agent import __version__
 
     return __version__
+
+
+def connected_line(link: MeshtasticLink) -> str:
+    """The log line at each connect, so a member sees which node is used."""
+    me = link.my_node()
+    name = node_id(me) if me is not None else "(number not known yet)"
+    return f"mesh jobs: connected to node {name}, {len(link.nodes())} nodes in its list"
 
 
 def _client(config: MeshConfig) -> aiomqtt.Client:
@@ -108,8 +116,11 @@ async def run(config: MeshConfig, stop: asyncio.Event) -> None:
     delay = 1.0
     while not stop.is_set():
         try:
+            fresh = link.interface is None
             await link.connect()
             node_down.ok()
+            if fresh:
+                logger.info(connected_line(link))
         except Exception as exc:
             node_down.bad(str(exc))
             with contextlib.suppress(TimeoutError):

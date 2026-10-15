@@ -6,7 +6,7 @@ before you write code.
 
 ## 1. What this repository is
 
-`sonoran-contributor`, formerly `rf-map`. It runs at a member's site and
+`sonoran-contributor` (the repository was `rf-map` until 2026-10-15). It runs at a member's site and
 does two things:
 
 - `rf-agent`: reads the decoder beside a member's SDR, thins what it
@@ -64,8 +64,9 @@ check this, not only the examples.
 - **Privacy** (design 8). Round the station position to
   `STATION_PRECISION_M` before it leaves the site. `ISM_ALLOW` is empty by
   default, so no `rtl_433` device passes until a member names it.
-- **No listening ports, no privileges.** The agent makes outgoing
-  connections: to its decoders and to the broker, over TLS. The one
+- **No listening ports, no privileges.** The contributor makes outgoing
+  connections only: to its decoders, to the member's own Meshtastic node
+  (`MESH_NODE`, TCP or serial), and to the broker, over TLS. The one
   exception is a decoder that only broadcasts and accepts no connection,
   `radiosonde_auto_rx` and `rtl_433`, and a member's own mod (`custom`,
   #324), which sends the same way. Those are read from a UDP socket,

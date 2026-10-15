@@ -92,7 +92,8 @@ def load_mesh(env: Mapping[str, str]) -> MeshConfig:
         source=source,
         broker_host=broker_host,
         broker_port=broker_port,
-        broker_user=env.get("BROKER_USER", "").strip() or f"rf-{location}-{source}",
+        # The RF agent's default, so RF and mesh jobs use one login (audit F2).
+        broker_user=env.get("BROKER_USER", "").strip() or location,
         broker_pass=env.get("BROKER_PASS", ""),
         node_host=node_host,
         node_port=node_port,

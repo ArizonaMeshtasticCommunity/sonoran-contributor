@@ -7,7 +7,7 @@ Local receivers · mesh jobs on your own node · MQTT to one broker · stored an
 
 [![Contract](https://img.shields.io/badge/contract-v1-EA6A3A?style=flat-square)](schema/rf-message-v1.schema.json)
 [![Phase](https://img.shields.io/badge/phases-1--5%20built-2A6DB2?style=flat-square)](#-roadmap)
-[![CI](https://github.com/ArizonaMeshtasticCommunity/rf-map/actions/workflows/ci.yml/badge.svg)](https://github.com/ArizonaMeshtasticCommunity/rf-map/actions/workflows/ci.yml)
+[![CI](https://github.com/ArizonaMeshtasticCommunity/sonoran-contributor/actions/workflows/ci.yml/badge.svg)](https://github.com/ArizonaMeshtasticCommunity/sonoran-contributor/actions/workflows/ci.yml)
 [![Sources](https://img.shields.io/badge/sources-local%20only-3776AB?style=flat-square)](#-what-it-reads)
 [![Sonoran](https://img.shields.io/badge/stored%20by-Sonoran-EA6A3A?style=flat-square)](https://github.com/ArizonaMeshtasticCommunity/beta-sonoran)
 
@@ -18,13 +18,13 @@ Local receivers · mesh jobs on your own node · MQTT to one broker · stored an
 `sonoran-contributor` runs at a member's site. It does two things, and
 you turn on either or both:
 
-- **RF**: the RF agent (`rf-agent`, below) reads the decoders beside
+- **RF**: the RF agent (below) reads the decoders beside
   your SDR.
 - **Mesh jobs**: it asks nodes on the mesh for what they do not
   broadcast, with your own Meshtastic node, for Sonoran. The first job
   is the measured noise floor. See [Mesh jobs](#-mesh-jobs-for-sonoran).
 
-`rf-agent` runs beside a member's SDR. It reads the decoder they already
+The RF agent runs beside a member's SDR. It reads the decoder they already
 run, thins what it hears, and publishes it to the community broker.
 Sonoran stores it and draws it on its **RF** tab: aircraft first, then
 APRS, radiosondes, weather sensors, and the 902 to 928 MHz band the mesh
@@ -37,6 +37,7 @@ traffic control and not for navigation.
 
 ## ✨ Features
 
+- 🛰️ **Mesh jobs** — your own Meshtastic node asks routers for what they measure but do not broadcast, such as their noise floor, for Sonoran. RF is not needed. See [Mesh jobs](#-mesh-jobs-for-sonoran).
 - 📶 **Spectrum** — a spare dongle sweeps 902–928 MHz, the band the mesh lives in, to find what interferes with it, or any range you choose, or several in turn.
 - 🧩 **Your own mods** — send what your own program decodes through the agent, as your station's data. See [docs/MODS.md](docs/MODS.md).
 - ✈️ **Aircraft** — ADS-B at 1090 MHz and UAT at 978 MHz, from `readsb`, `dump1090-fa` or `dump978-fa`.
@@ -53,19 +54,24 @@ member's site (one or more SDRs)                       Sonoran host
 ┌──────────────────────────────────────┐
 │ readsb ──:30005──┐                   │
 │ dump978 ─:30979──┤                   │   MQTT over TLS
-│ direwolf ─:8001──┼──► rf-agent ──────┼──────────────► broker
+│ direwolf ─:8001──┼──► contributor ───┼──────────────► broker
 │ rtl_433 ──UDP────┤   (read-only)     │                  │
 │ auto_rx ──UDP────┘                   │                  ▼
 └──────────────────────────────────────┘      sonoran-rf-ingest ──► RF tab
+
+member's site (mesh jobs)
+┌──────────────────────────────────────┐   jobs in, results out
+│ your node ◄──TCP 4403 or USB──► contributor ◄──────► broker ◄──► sonoran-contrib
+└──────────────────────────────────────┘                          ──► node pages, RF tab
 ```
 
-A USB SDR can be opened by one program at a time. `rf-agent` never opens
+A USB SDR can be opened by one program at a time. The contributor never opens
 one: it connects to the output the decoder already serves, which takes
 several readers at once.
 
 ## 📥 What it reads
 
-| Source | Decoder you already run | What rf-agent reads | Band | Phase |
+| Source | Decoder you already run | What the contributor reads | Band | Phase |
 |--------|-------------------------|---------------------|:----:|:-----:|
 | ADS-B | `readsb`, `dump1090-fa` | Beast on TCP 30005, or `aircraft.json` | 1090 MHz | **1** |
 | UAT | `dump978-fa` | JSON on TCP 30979 | 978 MHz | **1** |
@@ -77,13 +83,20 @@ several readers at once.
 
 ## 🚀 Quick start
 
-Add one service beside whatever you already run. No device passthrough, no
-privileges, no listening ports.
+Add one service beside whatever you already run. For RF there is no
+device passthrough, no privileges and no listening port. Mesh jobs over
+USB need the node's serial device; see [Mesh jobs](#-mesh-jobs-for-sonoran).
+This example is RF only.
+
+> [!IMPORTANT]
+> Use the `main` tag for now. Version tags such as `:1` are made only from
+> a release tag (`v1.2.3`), and none exists yet. `rf-agent:main` is the same
+> image under its old name.
 
 ```yaml
 services:
-  rf-agent:
-    image: ghcr.io/arizonameshtasticcommunity/sonoran-contributor:1
+  sonoran-contributor:
+    image: ghcr.io/arizonameshtasticcommunity/sonoran-contributor:main
     restart: unless-stopped
     logging:
       options:
@@ -94,7 +107,7 @@ services:
       SOURCE_ID: adsb-pi
       BROKER_URL: mqtts://broker.example:8883
       BROKER_USER: rf-tempe-roof-adsb-pi
-      BROKER_PASS: ${RF_AGENT_PASS}
+      BROKER_PASS: ${CONTRIBUTOR_PASS}
       SOURCES: adsb=beast://readsb:30005,uat=tcp://dump978:30979
       STATION_LAT: "33.42"
       STATION_LON: "-111.94"
@@ -103,8 +116,9 @@ services:
 
 Get a login from the community Discord bot first:
 
-1. `/rf location create` claims your station id. You become its owner.
-2. `/rf token mint` makes one login for one Pi. The bot sends you
+1. `/contributor location create` claims your station id. You become its
+   owner.
+2. `/contributor token mint` makes one login for one Pi. The bot sends you
    `STATION_ID`, `SOURCE_ID`, `BROKER_USER` and `BROKER_PASS` in a direct
    message, once. Keep the password: it is never shown again.
 
@@ -113,7 +127,8 @@ sweep, is one station on the map. Mint one login for each Pi, each with
 its own `SOURCE_ID`. You can rotate or revoke one Pi's login without
 touching the other.
 
-Each login may publish to its own station's topics and nothing else.
+Each login may publish to its own station's RF topics, and read and
+answer its own mesh jobs. Nothing else.
 
 The agent logs a heartbeat line every minute: how many positions it
 heard, sent and thinned. A decoder or broker that goes away is retried,
@@ -139,8 +154,18 @@ A node measures its own radio, such as its noise floor, and keeps it in
 for it, to the node that asked, as a direct message. Sonoran has no
 node on the mesh to ask with, but your node can ask (Sonoran #178).
 
-Turn it on with `MESH_NODE`, beside the settings above. `SOURCE_ID` is
-required. The same login does both RF and mesh jobs.
+Turn it on with `MESH_NODE`. **RF is not needed.** A site with no SDR
+runs mesh jobs only:
+
+| Setting | Mesh jobs only | RF only | Both |
+|---|:-:|:-:|:-:|
+| `STATION_ID`, `BROKER_URL`, `BROKER_USER`, `BROKER_PASS` | yes | yes | yes |
+| `SOURCE_ID` | **required** | optional | **required** |
+| `MESH_NODE` | yes | no | yes |
+| `SOURCES`, `STATION_LAT`/`LON`, an SDR, `rf-sweep` | no | yes | yes |
+
+With neither `SOURCES` nor `MESH_NODE`, it stops at start and says so.
+The same login does both RF and mesh jobs.
 
 ```yaml
     environment:
@@ -179,7 +204,9 @@ What it never does:
 
 The topics and messages are in
 [`schema/contributor-message-v1.schema.json`](schema/contributor-message-v1.schema.json),
-copied from Sonoran. See [docs/MESH-JOBS.md](docs/MESH-JOBS.md).
+copied from Sonoran. **To set up your node** (network, USB or
+`meshtasticd`), and to check that it works, see
+[docs/MESH-JOBS.md](docs/MESH-JOBS.md#set-up-your-node).
 
 ## ⚙️ Configuration
 
@@ -200,12 +227,16 @@ Every setting is an environment variable.
 | `SITE_MESH_NODE` | The Meshtastic node at this site, such as `!a1b2c3d4`, if any, so its own bursts are not read as interference. | — |
 | `CUSTOM_INTERVAL_S` | Seconds between two points of one thing from a [mod](#-your-own-mods). | `10` |
 | `CUSTOM_PER_MINUTE` | The most points one mod may send a minute. | `600` |
+| `MESH_NODE` | Your Meshtastic node, for [mesh jobs](#-mesh-jobs-for-sonoran): `tcp://host[:4403]` or `serial:///dev/ttyUSB0`. Unset: no mesh jobs. | — |
+| `MESH_JOBS` | The job kinds you allow, comma separated. | `local_stats` |
 
 `rf-sweep` has settings of its own; see [spectrum](#-spectrum-the-900-mhz-band-and-any-other-range).
 
 `BROKER_URL` must be `mqtts://`: the agent talks to a broker over TLS
 only, checked against the system's certificate authorities. The port
-defaults to 8883. `BROKER_USER` defaults to `STATION_ID`.
+defaults to 8883. `BROKER_USER` defaults to `STATION_ID`, for RF and
+mesh jobs alike. A minted login is `rf-<station>-<source>`, so copy
+`BROKER_USER` from the bot's message.
 
 With `SOURCE_ID`, every message names the source, and the heartbeat goes
 to `rf/v1/<station>/status/<source>`. A minted login may publish its
@@ -352,8 +383,8 @@ services:
     environment:
       SWEEP_SERIAL: SWEEP915
       SWEEP_GAIN_DB: "32.8"
-  rf-agent:
-    image: ghcr.io/arizonameshtasticcommunity/rf-agent:main
+  sonoran-contributor:
+    image: ghcr.io/arizonameshtasticcommunity/sonoran-contributor:main
     restart: unless-stopped
     logging:
       options:
@@ -362,7 +393,7 @@ services:
     environment:
       STATION_ID: tempe-roof
       BROKER_URL: mqtts://broker.example:8883
-      BROKER_PASS: ${RF_AGENT_PASS}
+      BROKER_PASS: ${CONTRIBUTOR_PASS}
       SOURCES: spectrum=tcp://rf-sweep:30950
       SITE_MESH_NODE: "!a1b2c3d4"
 ```
@@ -475,6 +506,12 @@ rounded position. It says where the sensor was heard, not where it is.
 | `rf/v1/<station>/<kind>` | a **batch** of up to 100 observations of one kind | 0 |
 | `rf/v1/<station>/spectrum` | one **minute** of the 900 MHz band | 0 |
 | `rf/v1/<station>/status` | the **heartbeat**, every 60 s, retained | 1 |
+| `sonoran/v1/contributors/<station>/<source>/outbox/<job>` | a mesh **job**, from Sonoran, retained | 1 |
+| `sonoran/v1/contributors/<station>/<source>/inbox/<job>` | its **result** | 1 |
+| `sonoran/v1/contributors/<station>/<source>/status` | the mesh **heartbeat**, with the node list, retained | 1 |
+
+The RF messages follow [`schema/rf-message-v1.schema.json`](schema/rf-message-v1.schema.json)
+and the mesh job messages [`schema/contributor-message-v1.schema.json`](schema/contributor-message-v1.schema.json).
 
 A message names the station its topic names, or Sonoran drops it. Unknown
 fields are ignored, so an agent may send more than the contract; a field
@@ -522,9 +559,12 @@ Check any message against the contract:
 uv run --with jsonschema --with rfc3339-validator python tools/validate.py examples/*.json
 ```
 
-A message that passes here is one Sonoran accepts. The schema is generated
-from Sonoran's `sonoran/rf/schema.py`; copy it here when the contract
-changes, never edit it by hand.
+A message that passes here is one Sonoran accepts. `tools/validate.py`
+checks RF messages. The mesh job messages are checked against
+`schema/contributor-message-v1.schema.json` in `tests/test_contributor.py`.
+Both schemas are generated in Sonoran (`sonoran/rf/schema.py` and
+`sonoran/contrib/schema.py`). Copy them here, in their own commit, when
+the contract changes. Never edit them by hand.
 
 ## 🗺️ Roadmap
 
@@ -533,6 +573,7 @@ changes, never edit it by hand.
 3. **APRS** — the APRS reader, off the air. Built.
 4. **Radiosondes and weather sensors** — two more readers and the allow-list. Built.
 5. **Members' mods** — the `custom` input and the library in `rf_agent.messages`. Built, here and in Sonoran.
+6. **Mesh jobs** — LocalStats from routers, read by members' own nodes (Sonoran #178). Built, here and in Sonoran.
 
 ## 📚 Documentation
 
@@ -542,6 +583,9 @@ changes, never edit it by hand.
 | [`AGENTS.md`](AGENTS.md) | The rules for anyone, person or agent, working in this repository |
 | [`schema/rf-message-v1.schema.json`](schema/rf-message-v1.schema.json) | The message contract |
 | [`docs/MODS.md`](docs/MODS.md) | Writing your own mod: the format, the limits, and a complete example |
+| [`docs/MESH-JOBS.md`](docs/MESH-JOBS.md) | Mesh jobs: setting up your node, who decides what, and how to check it works |
+| [`docs/REGISTRAR.md`](docs/REGISTRAR.md) | The registrar: broker logins and their rules (operators) |
+| [`schema/contributor-message-v1.schema.json`](schema/contributor-message-v1.schema.json) | The mesh job contract |
 | [`examples/`](examples) | One valid message of each kind, and an example mod |
 
 ## 📄 Licence

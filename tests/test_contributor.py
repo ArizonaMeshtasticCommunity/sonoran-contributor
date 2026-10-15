@@ -324,3 +324,131 @@ def test_settings_that_cannot_work_are_refused(change: dict[str, str]) -> None:
 
     with pytest.raises(ConfigError):
         load_mesh({**ENV, **change})
+
+
+# --- The log line that says the node is reached (docs/MESH-JOBS.md 4) ---
+
+
+class _Linked:
+    def __init__(self, me: int | None, nodes: int) -> None:
+        self.me, self.count = me, nodes
+
+    def my_node(self) -> int | None:
+        return self.me
+
+    def nodes(self) -> list[tuple[int, int | None, float | None]]:
+        return [(n, 1, NOW.timestamp()) for n in range(self.count)]
+
+
+def test_the_start_line_names_the_node_and_its_list() -> None:
+    from sonoran_contributor.worker import connected_line
+
+    line = connected_line(_Linked(0xA1B2C3D4, 57))
+    assert line == "mesh jobs: connected to node !a1b2c3d4, 57 nodes in its list"
+
+
+def test_the_start_line_says_when_the_node_has_not_told_its_number() -> None:
+    from sonoran_contributor.worker import connected_line
+
+    assert connected_line(_Linked(None, 0)) == (
+        "mesh jobs: connected to node (number not known yet), 0 nodes in its list"
+    )
+
+
+# --- RF is not needed for mesh jobs (README, docs/MESH-JOBS.md) ---------
+
+
+async def test_mesh_jobs_run_with_no_rf_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    from rf_agent import agent as rf
+    from sonoran_contributor import main, worker
+
+    started: list[str] = []
+
+    async def fake_mesh(config, stop) -> None:  # type: ignore[no-untyped-def]
+        started.append(f"mesh {config.location}/{config.source}")
+
+    async def fake_rf(config, stop) -> None:  # type: ignore[no-untyped-def]
+        started.append("rf")
+
+    monkeypatch.setattr(worker, "run", fake_mesh)
+    monkeypatch.setattr(rf, "main", fake_rf)
+    for key in list(main.os.environ):
+        monkeypatch.delenv(key)
+    for key, value in ENV.items():
+        monkeypatch.setenv(key, value)
+    assert "SOURCES" not in main.os.environ
+    assert await main._main() == 0
+    assert started == ["mesh phoenix/pi5"]
+
+
+async def test_with_neither_it_stops_and_says_so(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from sonoran_contributor import main
+
+    for key in list(main.os.environ):
+        monkeypatch.delenv(key)
+    assert await main._main() == 2
+    assert "nothing to do" in capsys.readouterr().err
+
+
+# --- The node goes away (audit F1) ---------------------------------------
+
+
+class _BrokenLink:
+    async def request_local_stats(self, target: int, wait_s: float) -> Reply | None:
+        raise OSError(104, "Connection reset by peer")
+
+
+async def test_a_node_that_goes_away_is_an_error_result_not_a_crash() -> None:
+    """The library raises OSError on a dead socket (tcp_interface.py 136-140)."""
+    result = await _do(_job(), _BrokenLink())  # type: ignore[arg-type]
+    assert result is not None
+    assert result["outcome"] == "error"
+    assert "Connection reset" in result["detail"]
+    assert_valid(result)
+
+
+class _FakeInterface:
+    def __init__(self, fail: bool) -> None:
+        self.fail = fail
+        self.closed = False
+
+    def sendData(self, *args: Any, **kwargs: Any) -> None:
+        if self.fail:
+            raise OSError(32, "Broken pipe")
+
+    def close(self) -> None:
+        self.closed = True
+
+
+async def test_the_link_drops_a_dead_interface_and_opens_a_new_one() -> None:
+    from sonoran_contributor.node import MeshtasticLink
+
+    opened: list[_FakeInterface] = []
+
+    def fake_open() -> _FakeInterface:
+        interface = _FakeInterface(fail=not opened)
+        opened.append(interface)
+        return interface
+
+    link = MeshtasticLink("node.example", 4403, None)
+    link._open = fake_open  # type: ignore[method-assign]
+    with pytest.raises(LinkError, match="Broken pipe"):
+        await link.request_local_stats(1, 0.01)
+    assert link.interface is None and opened[0].closed
+    # The next job opens a new connection, and this one does not fail.
+    assert await link.request_local_stats(1, 0.01) is None
+    assert len(opened) == 2
+
+
+# --- One login for RF and mesh jobs (audit F2) ---------------------------
+
+
+def test_without_broker_user_mesh_jobs_use_the_same_login_as_rf() -> None:
+    from rf_agent.config import load as load_rf
+    from sonoran_contributor.config import load_mesh
+
+    env = {k: v for k, v in ENV.items() if k != "BROKER_USER"}
+    rf = load_rf({**env, "SOURCES": "adsb=beast://readsb:30005"})
+    assert load_mesh(env).broker_user == rf.broker_user
