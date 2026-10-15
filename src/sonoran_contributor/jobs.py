@@ -108,6 +108,12 @@ async def do_job(
         reply = await link.request_local_stats(job.target_num, wait)
     except LinkError as exc:
         return result_message(job, location, source, "error", now(), detail=str(exc)[:200])
+    except Exception as exc:
+        # Anything else from the node, such as the OSError of a dead
+        # socket, is the job's error. It must never stop the process,
+        # which may run RF too (audit F1).
+        detail = f"{type(exc).__name__}: {exc}"[:200]
+        return result_message(job, location, source, "error", now(), detail=detail)
     sent = now()
     if reply is None:
         return result_message(job, location, source, "no_reply", sent)

@@ -107,7 +107,11 @@ class MeshtasticLink:
 
         async with self._lock:
             if self.interface is None:
-                raise LinkError("not connected to the node")
+                # The last one died. Open a new one for this job.
+                try:
+                    await self.connect()
+                except Exception as exc:
+                    raise LinkError(f"cannot reach the node: {exc}") from exc
             answered = threading.Event()
             box: dict[str, Any] = {}
 
@@ -117,14 +121,21 @@ class MeshtasticLink:
 
             request = telemetry_pb2.Telemetry()
             request.local_stats.CopyFrom(telemetry_pb2.LocalStats())
-            await asyncio.to_thread(
-                self.interface.sendData,
-                request,
-                destinationId=target,
-                portNum=portnums_pb2.PortNum.TELEMETRY_APP,
-                wantResponse=True,
-                onResponse=on_response,
-            )
+            try:
+                await asyncio.to_thread(
+                    self.interface.sendData,
+                    request,
+                    destinationId=target,
+                    portNum=portnums_pb2.PortNum.TELEMETRY_APP,
+                    wantResponse=True,
+                    onResponse=on_response,
+                )
+            except Exception as exc:
+                # A dead socket or serial port (OSError in the library's
+                # _writeBytes). Drop this interface; the next job opens a
+                # new one.
+                await self.close()
+                raise LinkError(f"the node went away: {exc}") from exc
             if not await asyncio.to_thread(answered.wait, wait_s):
                 return None
             return reply_from_packet(box["packet"], datetime.now(UTC))

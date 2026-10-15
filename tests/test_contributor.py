@@ -414,7 +414,7 @@ class _FakeInterface:
         self.fail = fail
         self.closed = False
 
-    def sendData(self, *args: Any, **kwargs: Any) -> None:  # noqa: N802 - the library's name
+    def sendData(self, *args: Any, **kwargs: Any) -> None:
         if self.fail:
             raise OSError(32, "Broken pipe")
 
