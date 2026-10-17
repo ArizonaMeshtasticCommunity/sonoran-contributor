@@ -226,3 +226,35 @@ def test_a_bad_proxy_port_is_refused(bad: str) -> None:
 
     with pytest.raises(ConfigError):
         load_mesh({**ENV, "MESH_PROXY_PORT": bad})
+
+
+def test_a_reconnect_by_the_library_rebuilds_the_cache() -> None:
+    """The library reconnects TCP itself and reads the config again (tcp_interface._reconnect)."""
+    hub = ProxyHub(send_upstream=lambda _: None)
+    _upstream_config(hub)
+    seen: list[bytes] = []
+    hub.subscribe(seen.append)
+    hub.on_from_radio(_from(my_info=mesh_pb2.MyNodeInfo(my_node_num=0xA2ED97DC)))
+    assert not hub.ready and seen == []  # config frames are cached, not broadcast
+    hub.on_from_radio(_from(node_info=mesh_pb2.NodeInfo(num=0x11111111)))
+    hub.on_from_radio(_from(config_complete_id=8))
+    nums = {_parse_from(f).node_info.num for f in hub.handle_client(_to(want_config_id=1))}
+    assert 0x11111111 in nums
+
+
+def test_the_link_tees_every_frame_from_the_node() -> None:
+    from sonoran_contributor.node import tee_class
+
+    class FakeInterface:
+        def __init__(self) -> None:
+            self.handled: list[bytes] = []
+            self._handleFromRadio(b"during-config")
+
+        def _handleFromRadio(self, fromRadioBytes: bytes) -> None:  # noqa: N802, N803
+            self.handled.append(fromRadioBytes)
+
+    got: list[bytes] = []
+    iface = tee_class(FakeInterface)(tee=got.append)
+    iface._handleFromRadio(b"later")
+    assert got == [b"during-config", b"later"]
+    assert iface.handled == [b"during-config", b"later"]
