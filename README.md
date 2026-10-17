@@ -200,7 +200,8 @@ What it never does:
   can be asked once by each contributor that hears it.
 - One job is one request and one answer. Every node between relays
   each of them, so a node 3 hops away costs about 6 transmissions.
-- It opens no port. It connects out to your node and to the broker.
+- It opens no port, unless you turn on the proxy for your apps
+  (`MESH_PROXY_PORT`). It connects out to your node and to the broker.
 
 The topics and messages are in
 [`schema/contributor-message-v1.schema.json`](schema/contributor-message-v1.schema.json),
@@ -229,6 +230,8 @@ Every setting is an environment variable.
 | `CUSTOM_PER_MINUTE` | The most points one mod may send a minute. | `600` |
 | `MESH_NODE` | Your Meshtastic node, for [mesh jobs](#-mesh-jobs-for-sonoran): `tcp://host[:4403]` or `serial:///dev/ttyUSB0`. Unset: no mesh jobs. | — |
 | `MESH_JOBS` | The job kinds you allow, comma separated. | `local_stats` |
+| `MESH_PROXY_PORT` | Let apps share your node through the contributor on this port. See [docs/MESH-JOBS.md](docs/MESH-JOBS.md#sharing-the-node-with-apps). Unset: off. | — |
+| `MESH_PROXY_BIND` | The address the proxy listens on. No password: keep it on your own network. | `127.0.0.1` |
 
 `rf-sweep` has settings of its own; see [spectrum](#-spectrum-the-900-mhz-band-and-any-other-range).
 
