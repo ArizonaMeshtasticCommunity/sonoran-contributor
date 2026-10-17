@@ -452,3 +452,85 @@ def test_without_broker_user_mesh_jobs_use_the_same_login_as_rf() -> None:
     env = {k: v for k, v in ENV.items() if k != "BROKER_USER"}
     rf = load_rf({**env, "SOURCES": "adsb=beast://readsb:30005"})
     assert load_mesh(env).broker_user == rf.broker_user
+
+
+# --- Hop limit of a request: the firmware's own reply rule (patch 1) ----
+# RoutingModule::getHopLimitForResponse, RoutingModule.cpp 64-81, and
+# Default::getConfiguredOrDefaultHopLimit, Default.cpp 92-98 (v2.8.1).
+
+
+@pytest.mark.parametrize(
+    ("hops", "configured", "expected"),
+    [
+        (0, 7, 2),  # a neighbour: two hops of margin, not seven
+        (1, 7, 3),
+        (4, 7, 6),
+        (5, 7, 7),  # hops + 2 is not below the limit: the limit
+        (2, 3, 3),
+        (1, 3, 3),
+        (6, 3, 6),  # farther than the limit: as many hops as it takes
+        (None, 7, 7),  # hops unknown: the configured limit, as the firmware does
+        (2, 9, 4),  # a limit above 7 is read as 7
+    ],
+)
+def test_the_request_hop_limit_follows_the_firmware_reply_rule(hops, configured, expected) -> None:
+    from sonoran_contributor.node import request_hop_limit
+
+    assert request_hop_limit(hops, configured) == expected
+
+
+def test_a_neighbour_is_never_asked_with_hop_limit_seven() -> None:
+    """Would be caught: sending with the node's own limit, which flooded the mesh (10/17)."""
+    from sonoran_contributor.node import request_hop_limit
+
+    assert request_hop_limit(0, 7) < 7
+
+
+# --- Which nodes the heartbeat offers as targets (patch 2) ---------------
+
+
+def _db(nodes: dict[str, dict]) -> dict[int, dict]:
+    return {int(num, 16): info for num, info in nodes.items()}
+
+
+def test_the_heartbeat_leaves_out_our_own_node() -> None:
+    from sonoran_contributor.node import offered_nodes
+
+    db = _db(
+        {
+            "a2ed97dc": {"hopsAway": 0, "lastHeard": 1.0, "user": {"publicKey": "k"}},
+            "eac11565": {"hopsAway": 0, "lastHeard": 2.0, "user": {"publicKey": "k"}},
+        }
+    )
+    assert [n for n, _, _ in offered_nodes(db, me=0xA2ED97DC, uses_pki=True)] == [0xEAC11565]
+
+
+def test_with_pki_a_node_without_a_key_is_not_offered() -> None:
+    """Firmware refuses a DM to a node whose key it lacks (Router.cpp 1350-1354, v2.8.1)."""
+    from sonoran_contributor.node import offered_nodes
+
+    db = _db(
+        {
+            "eac11565": {"hopsAway": 0, "lastHeard": 2.0, "user": {"publicKey": "k"}},
+            "80c0783b": {"hopsAway": 5, "lastHeard": 3.0, "user": {}},
+        }
+    )
+    assert [n for n, _, _ in offered_nodes(db, me=1, uses_pki=True)] == [0xEAC11565]
+
+
+def test_without_pki_a_node_without_a_key_is_still_offered() -> None:
+    """A licensed (ham) node sends no PKI (wouldEncryptWithPKC, Router.cpp 1198)."""
+    from sonoran_contributor.node import offered_nodes
+
+    db = _db({"80c0783b": {"hopsAway": 5, "lastHeard": 3.0, "user": {}}})
+    assert [n for n, _, _ in offered_nodes(db, me=1, uses_pki=False)] == [0x80C0783B]
+
+
+# --- An answer that is neither telemetry nor a routing error (patch 3) --
+
+
+def test_an_unexpected_answer_says_what_it_was() -> None:
+    from sonoran_contributor.node import reply_from_packet
+
+    with pytest.raises(LinkError, match="portnum TEXT_MESSAGE_APP"):
+        reply_from_packet({"decoded": {"portnum": "TEXT_MESSAGE_APP", "text": "hi"}}, NOW)
