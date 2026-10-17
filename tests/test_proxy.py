@@ -250,7 +250,7 @@ def test_the_link_tees_every_frame_from_the_node() -> None:
             self.handled: list[bytes] = []
             self._handleFromRadio(b"during-config")
 
-        def _handleFromRadio(self, fromRadioBytes: bytes) -> None:  # noqa: N802, N803
+        def _handleFromRadio(self, fromRadioBytes: bytes) -> None:
             self.handled.append(fromRadioBytes)
 
     got: list[bytes] = []
@@ -258,3 +258,36 @@ def test_the_link_tees_every_frame_from_the_node() -> None:
     iface._handleFromRadio(b"later")
     assert got == [b"during-config", b"later"]
     assert iface.handled == [b"during-config", b"later"]
+
+
+async def test_with_a_port_the_worker_listens_and_resets_on_each_connect() -> None:
+    import socket
+
+    from sonoran_contributor.config import load_mesh
+    from sonoran_contributor.node import MeshtasticLink
+    from sonoran_contributor.worker import _start_proxy
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        free = s.getsockname()[1]
+    config = load_mesh({**ENV, "MESH_PROXY_PORT": str(free)})
+    link = MeshtasticLink("meshnode", 4403, None)
+    server = await _start_proxy(config, link)
+    try:
+        assert server is not None and link.tee is not None and link.before_connect is not None
+        _, w = await asyncio.open_connection("127.0.0.1", free)
+        w.close()
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
+async def test_without_a_port_nothing_listens() -> None:
+    """AGENTS.md 3: no listening port unless the member asks for one."""
+    from sonoran_contributor.config import load_mesh
+    from sonoran_contributor.node import MeshtasticLink
+    from sonoran_contributor.worker import _start_proxy
+
+    link = MeshtasticLink("meshnode", 4403, None)
+    assert await _start_proxy(load_mesh(ENV), link) is None
+    assert link.tee is None

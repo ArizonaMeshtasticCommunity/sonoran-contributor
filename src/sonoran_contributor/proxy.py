@@ -119,6 +119,9 @@ class ProxyHub:
         except Exception:
             return
         kind = msg.WhichOneof("payload_variant")
+        if kind == "my_info" and self.ready:
+            # The library reconnected and reads the config again.
+            self.reset()
         if kind == "node_info":
             self._nodes[msg.node_info.num] = raw
         if not self.ready:

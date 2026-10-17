@@ -111,13 +111,35 @@ def reply_from_packet(packet: dict[str, Any], now: datetime) -> Reply:
     return Reply(values, now, hops=hops, rx_snr=rx_snr, rx_rssi=rx_rssi)
 
 
+def tee_class(base: type) -> type:
+    """`base`, a library interface, that also hands every raw frame from
+    the node to `tee` before handling it: the proxy's feed. Set before
+    the library connects, so the config frames pass through it too."""
+
+    class Tee(base):  # type: ignore[valid-type, misc]
+        def __init__(self, *args: Any, tee: Any = None, **kwargs: Any) -> None:
+            self._tee = tee
+            super().__init__(*args, **kwargs)
+
+        def _handleFromRadio(self, fromRadioBytes: bytes) -> None:
+            if self._tee is not None:
+                self._tee(bytes(fromRadioBytes))
+            super()._handleFromRadio(fromRadioBytes)
+
+    return Tee
+
+
 class MeshtasticLink:
     """One open connection to the member's node."""
 
-    def __init__(self, host: str | None, port: int, serial: str | None) -> None:
+    def __init__(self, host: str | None, port: int, serial: str | None, tee: Any = None) -> None:
         self.host = host
         self.port = port
         self.serial = serial
+        # Every raw frame from the node, for the proxy. None: no proxy.
+        self.tee = tee
+        # Called before each new connection, so the proxy reads the config again.
+        self.before_connect: Any = None
         self.interface: Any = None
         # One request at a time: a contributor has one job at a time, and
         # the library's response handlers are keyed by packet id only.
@@ -127,14 +149,22 @@ class MeshtasticLink:
         if self.serial:
             from meshtastic.serial_interface import SerialInterface
 
-            return SerialInterface(devPath=self.serial)
+            return tee_class(SerialInterface)(devPath=self.serial, tee=self.tee)
         from meshtastic.tcp_interface import TCPInterface
 
-        return TCPInterface(hostname=self.host, portNumber=self.port)
+        return tee_class(TCPInterface)(hostname=self.host, portNumber=self.port, tee=self.tee)
 
     async def connect(self) -> None:
         if self.interface is None:
+            if self.before_connect is not None:
+                self.before_connect()
             self.interface = await asyncio.to_thread(self._open)
+
+    def send_to_radio(self, to_radio: Any) -> None:
+        """Pass one ToRadio from a proxy client to the node, as it is."""
+        interface = self.interface
+        if interface is not None:
+            interface._sendToRadio(to_radio)
 
     async def close(self) -> None:
         interface, self.interface = self.interface, None

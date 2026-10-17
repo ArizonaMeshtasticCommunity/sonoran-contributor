@@ -34,6 +34,7 @@ from sonoran_contributor.contract import (
 )
 from sonoran_contributor.jobs import Seen, do_job, heard_list
 from sonoran_contributor.node import MeshtasticLink
+from sonoran_contributor.proxy import ProxyHub, serve
 
 logger = logging.getLogger(__name__)
 
@@ -107,9 +108,27 @@ async def _jobs(
         logger.info("job %s for %s: %s", job.job, job.target, result["outcome"])
 
 
+async def _start_proxy(config: MeshConfig, link: MeshtasticLink) -> asyncio.Server | None:
+    """The opt-in node proxy (proxy.py), when MESH_PROXY_PORT is set."""
+    if config.proxy_port is None:
+        return None
+    loop = asyncio.get_running_loop()
+
+    def upstream(to_radio: object) -> None:
+        # Off the event loop: the library writes to the socket.
+        loop.run_in_executor(None, link.send_to_radio, to_radio)
+
+    hub = ProxyHub(send_upstream=upstream)
+    # The library reads frames in its own thread; the hub lives on the loop.
+    link.tee = lambda raw: loop.call_soon_threadsafe(hub.on_from_radio, raw)
+    link.before_connect = hub.reset
+    return await serve(hub, config.proxy_bind, config.proxy_port)
+
+
 async def run(config: MeshConfig, stop: asyncio.Event) -> None:
     """Run the mesh worker until `stop` is set."""
     link = MeshtasticLink(config.node_host, config.node_port, config.node_serial)
+    proxy = await _start_proxy(config, link)
     node_down = Condition(logger, "Meshtastic node")
     broker_down = Condition(logger, "broker")
     seen = Seen()
@@ -153,6 +172,9 @@ async def run(config: MeshConfig, stop: asyncio.Event) -> None:
                 await asyncio.wait_for(stop.wait(), delay)
             delay = min(delay * 2, BACKOFF_MAX_S)
     await link.close()
+    if proxy is not None:
+        proxy.close()
+        await proxy.wait_closed()
 
 
 async def _read(client: aiomqtt.Client, seen: Seen, queue: asyncio.Queue[Job]) -> None:
