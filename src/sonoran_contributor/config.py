@@ -35,6 +35,9 @@ class MeshConfig:
     node_serial: str | None
     allow: frozenset[str]
     log_level: str
+    # The opt-in node proxy (proxy.py). No port: off.
+    proxy_port: int | None = None
+    proxy_bind: str = "127.0.0.1"
 
 
 def mesh_enabled(env: Mapping[str, str]) -> bool:
@@ -85,6 +88,17 @@ def load_mesh(env: Mapping[str, str]) -> MeshConfig:
             f"kinds are {', '.join(sorted(KNOWN_KINDS))}"
         )
 
+    proxy_port = None
+    port_text = env.get("MESH_PROXY_PORT", "").strip()
+    if port_text:
+        try:
+            proxy_port = int(port_text)
+            if not 1 <= proxy_port <= 65535:
+                raise ValueError
+        except ValueError:
+            errors.append("MESH_PROXY_PORT must be a port number, 1 to 65535")
+    proxy_bind = env.get("MESH_PROXY_BIND", "").strip() or "127.0.0.1"
+
     if errors:
         raise ConfigError("; ".join(errors))
     return MeshConfig(
@@ -100,4 +114,6 @@ def load_mesh(env: Mapping[str, str]) -> MeshConfig:
         node_serial=node_serial,
         allow=allow,
         log_level=env.get("LOG_LEVEL", "INFO").upper(),
+        proxy_port=proxy_port,
+        proxy_bind=proxy_bind,
     )

@@ -83,9 +83,23 @@ can reach. It can be a radio on your network, a radio on USB, or
 - Its node list shows the routers it hears. The contributor sends that
   list to Sonoran every minute, and Sonoran gives jobs only for nodes in
   it.
-- The job is checked against firmware v2.7.26
-  (`DeviceTelemetryModule::allocReply`). An older firmware on the node or
-  on the target may not answer.
+- What a **target** answers depends on its firmware (checked tag by
+  tag in `src/modules/Telemetry/DeviceTelemetry.cpp`):
+
+  | Target firmware | Answers a LocalStats request | Measured noise floor |
+  |---|:-:|:-:|
+  | 2.4 and older | no | no |
+  | 2.5 to 2.7.24 | yes (`allocReply`) | no, never set |
+  | 2.7.25 and newer (first stable: 2.7.26) | yes | yes |
+
+  A reading from a node on 2.5 to 2.7.24 has every other stat and no
+  noise floor. Sonoran cannot see a target's firmware, so it cannot skip
+  older ones.
+- With PKI (every node that has keys and is not licensed), our node can
+  send a request only to a node whose public key it holds. The firmware
+  refuses the rest (`refuse legacy DM`, `src/mesh/Router.cpp` 1350-1354,
+  v2.8.1). The heartbeat therefore leaves those out, and our own node
+  too, so Sonoran never picks them.
 
 ### 2. How the contributor reaches it
 
@@ -108,8 +122,10 @@ services:
       MESH_NODE: tcp://192.168.1.50      # your node; :4403 is the default
 ```
 
-A node that a phone app already uses over the network may refuse a
-second TCP client. Give the contributor its own way in, or use USB.
+A node serves **one TCP client**. A new client makes it drop the old
+one ("Force close previous TCP connection", `src/mesh/api/ServerAPI.cpp`
+126-140, v2.8.1). So a phone app on WiFi and the contributor knock each
+other off. See [Sharing the node with apps](#sharing-the-node-with-apps).
 
 **Over USB (serial).** Pass the device into the container, and let the
 container's user open it. The device belongs to the group `dialout`, and
@@ -164,6 +180,48 @@ while it lasts:
 | `Meshtastic node: ... Connection refused`, or a timeout | The address, the port, and that the radio's network is on |
 | `broker: ...` | `BROKER_URL`, `BROKER_USER`, `BROKER_PASS` |
 | `job ...: no_reply` again and again | The target does not answer your node. Sonoran gives the job to the next contributor. |
+
+## Sharing the node with apps
+
+The contributor keeps the node's one TCP connection. To use an app at the
+same time, pick one:
+
+| Way | How | Note |
+|---|---|---|
+| Bluetooth or USB for the app | Connect the app by Bluetooth or USB | No conflict: those are other links |
+| USB for the contributor | `MESH_NODE: serial:///dev/ttyUSB0` | The app keeps WiFi |
+| **The contributor's proxy** | Set `MESH_PROXY_PORT`; apps connect to the Pi on that port | Built in, off by default |
+| MeshMonitor's Virtual Node | Point `MESH_NODE` at MeshMonitor's virtual node port (4404 by default) | If you run MeshMonitor already |
+
+### The contributor's proxy
+
+```yaml
+    ports:
+      - "4404:4404"                      # only if apps on other machines connect
+    environment:
+      MESH_PROXY_PORT: "4404"
+      MESH_PROXY_BIND: 0.0.0.0           # default 127.0.0.1: this machine only
+```
+
+Then connect the app to the Pi's address, port 4404, as to a node.
+
+- A new app gets the node's config and node list at once, from a cache.
+- Every packet the node sends goes to every app. The app's own packets
+  go to the node.
+- **An app cannot change the node's settings through the proxy**:
+  `ADMIN_APP` packets are dropped. Change settings by Bluetooth or USB.
+- **The port has no password.** Anyone who can reach it can send
+  messages as your node. Keep it on your own network, never forward it
+  from the internet.
+
+## Hop limit of a request
+
+A request uses the firmware's own rule for a reply
+(`RoutingModule::getHopLimitForResponse`, `src/modules/RoutingModule.cpp`
+64-81, v2.8.1): the target's hops away plus 2, when that is below your
+node's hop limit; the limit otherwise; the limit when the hops are not
+known. A neighbour is asked with hop limit 2, not 7. With the node's own
+limit, one failed request flooded the whole mesh (2026-10-17).
 
 ## When something restarts
 

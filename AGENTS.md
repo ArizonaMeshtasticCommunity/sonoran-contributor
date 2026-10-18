@@ -72,7 +72,10 @@ check this, not only the examples.
   #324), which sends the same way. Those are read from a UDP socket,
   which serves nothing and accepts no connection, and every datagram is
   treated as untrusted input. The `custom` socket is on 127.0.0.1 unless
-  the member names another address. Nothing else binds a port.
+  the member names another address. The other exception is the node
+  proxy (`proxy.py`), off unless the member sets `MESH_PROXY_PORT`, on
+  127.0.0.1 unless they set `MESH_PROXY_BIND`. It never forwards
+  `ADMIN_APP`. Nothing else binds a port.
 - **The only other outgoing connection is the member's own alert
   webhook**, and only when they set `ALERT_WEBHOOK`. It carries
   conditions (a decoder down, a stalled sweep), never what was heard.
