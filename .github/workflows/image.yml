@@ -6,6 +6,11 @@ name: Image
 #
 # A tag `v1.2.3` publishes `1.2.3`, `1.2` and `1`, so a member who runs
 # `rf-agent:1` gets every compatible release. `main` publishes `main`.
+# The rules are in tools/image_tags.sh.
+#
+# Actions here must be pinned to a commit, and only the few that the
+# repository's Actions settings list may run (see ci.yml). So this uses
+# the Docker CLI that the runner already has, not the docker/* actions.
 
 on:
   push:
@@ -35,29 +40,51 @@ jobs:
           - name: rf-registrar
             file: Dockerfile.registrar
             platforms: linux/amd64,linux/arm64
+    env:
+      IMAGE: ghcr.io/arizonameshtasticcommunity/${{ matrix.name }}
+      FILE: ${{ matrix.file }}
+      PLATFORMS: ${{ matrix.platforms }}
+      # Pinned by digest, like the actions. Keep in step with ci.yml.
+      BINFMT_IMAGE: tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+      BUILDKIT_IMAGE: moby/buildkit@sha256:c5f8862f52499773af85bc07695b2379ef08e8002352b0df2c4864c91d78dabe
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/arizonameshtasticcommunity/${{ matrix.name }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}},enable=${{ !startsWith(github.ref, 'refs/tags/v0.') }}
-            type=ref,event=branch
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ${{ matrix.file }}
-          platforms: ${{ matrix.platforms }}
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          persist-credentials: false
+      - name: Set up QEMU and a multi-platform builder
+        run: |
+          docker run --privileged --rm "$BINFMT_IMAGE" --install arm64,arm
+          docker buildx create --name multi --driver docker-container \
+            --driver-opt "image=$BUILDKIT_IMAGE" --use
+          docker buildx inspect --bootstrap
+      - name: Log in to ghcr.io
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: printf '%s' "$TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+      - name: Build and push
+        env:
+          REF: ${{ github.ref }}
+          SHA: ${{ github.sha }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          # An assignment, so a ref the script refuses stops the job.
+          tags=$(tools/image_tags.sh "$IMAGE" "$REF")
+          args=()
+          while read -r tag; do
+            args+=(--tag "$tag")
+          done <<<"$tags"
+          # The source label links the package to this repository.
+          docker buildx build \
+            --platform "$PLATFORMS" \
+            --file "$FILE" \
+            "${args[@]}" \
+            --label "org.opencontainers.image.source=https://github.com/$REPOSITORY" \
+            --label "org.opencontainers.image.revision=$SHA" \
+            --label "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --label "org.opencontainers.image.title=${IMAGE##*/}" \
+            --push \
+            .
+      - name: Log out
+        if: always()
+        run: docker logout ghcr.io
