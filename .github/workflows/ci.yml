@@ -1,5 +1,11 @@
 name: CI
 
+# Actions here must be pinned to a commit, and only the few that the
+# repository's Actions settings list may run: actions/checkout and
+# astral-sh/setup-uv, at the commits below. Anything else makes the run
+# fail to start (startup_failure). The docker job therefore uses the
+# Docker CLI that the runner already has, not the docker/* actions.
+
 on:
   push:
     branches: [main]
@@ -12,8 +18,10 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
       - run: uv sync --extra dev --python 3.13
       - run: uv run ruff check src tests tools
       - run: uv run ruff format --check src tests tools
@@ -21,34 +29,32 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
       - run: uv sync --extra dev --python 3.13
       - run: uv run pytest
       - run: uv run python tools/validate.py examples/*.json
 
   docker:
     runs-on: ubuntu-latest
+    env:
+      # Pinned by digest, like the actions. Update both together.
+      BINFMT_IMAGE: tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+      BUILDKIT_IMAGE: moby/buildkit@sha256:c5f8862f52499773af85bc07695b2379ef08e8002352b0df2c4864c91d78dabe
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up QEMU and a multi-platform builder
+        run: |
+          docker run --privileged --rm "$BINFMT_IMAGE" --install arm64,arm
+          docker buildx create --name multi --driver docker-container \
+            --driver-opt "image=$BUILDKIT_IMAGE" --use
+          docker buildx inspect --bootstrap
       # Every platform the release builds, so a board that breaks shows
       # here and not at release time. Nothing is pushed.
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          platforms: linux/amd64,linux/arm64,linux/arm/v7
-          push: false
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: Dockerfile.sweep
-          platforms: linux/amd64,linux/arm64,linux/arm/v7
-          push: false
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: Dockerfile.registrar
-          platforms: linux/amd64,linux/arm64
-          push: false
+      - run: docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7 -f Dockerfile .
+      - run: docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7 -f Dockerfile.sweep .
+      - run: docker buildx build --platform linux/amd64,linux/arm64 -f Dockerfile.registrar .
