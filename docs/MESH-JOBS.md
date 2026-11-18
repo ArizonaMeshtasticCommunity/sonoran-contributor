@@ -25,13 +25,24 @@ those rules.
    someone else.
 3. A kind not in `MESH_JOBS` is answered `refused`, and the node is not
    used.
-4. The node asks the target and waits at most 300 seconds, and never past
-   the job's `expires`. 300 seconds is `MeshInterface(timeout=300)` in the
+4. The node asks the target, with `want_ack` and `want_response`, and
+   waits at most 300 seconds, and never past the job's `expires`. 300 seconds is `MeshInterface(timeout=300)` in the
    Meshtastic Python library (`meshtastic/mesh_interface.py` line 93,
    2.7.11).
 5. The result is `ok` with the LocalStats fields by their protobuf
    names, `no_reply`, or `error` with the routing error, such as
-   `NO_RESPONSE`.
+   `NO_RESPONSE`. A `MAX_RETRANSMIT` NAK (our node or a relay gave up
+   after its retries) is `no_reply`, like a timeout.
+
+`want_ack` is there for targets that lack our node's public key. Such a
+target cannot decrypt the PKI request. With `want_ack` it answers
+`PKI_UNKNOWN_PUBKEY`, and on that NAK our node's firmware sends it our
+NodeInfo by itself (`ReliableRouter::sniffReceived`,
+`src/mesh/ReliableRouter.cpp` 163-169, v2.8.1.8e6a88d; also in v2.7.26).
+The job is an `error`, and a later job to that target can work. Without
+`want_ack` the target drops the request silently (the NAK is under
+`if (p->want_ack)`, line 125), the job times out, and the target never
+learns our key.
 
 A noise floor of 0 is "not measured": the firmware leaves it 0 when the
 radio cannot measure it (`getLocalStatsTelemetry`,
@@ -95,6 +106,13 @@ can reach. It can be a radio on your network, a radio on USB, or
   A reading from a node on 2.5 to 2.7.24 has every other stat and no
   noise floor. Sonoran cannot see a target's firmware, so it cannot skip
   older ones.
+- A target **before 2.8.0 with the NeighborInfo module on** answers with
+  NeighborInfo, never LocalStats. Its NeighborInfo module takes every
+  packet, not only its own port, and comes before the telemetry module;
+  only the first module's reply is sent (`MeshModule::callModules`,
+  `src/mesh/MeshModule.cpp`, v2.7.26.54e0d8d). 2.8.0 lets a module answer
+  only on its own port (`replyPortMatches`). The job is an `error` that
+  says so; the fix is a firmware update on the target.
 - With PKI (every node that has keys and is not licensed), our node can
   send a request only to a node whose public key it holds. The firmware
   refuses the rest (`refuse legacy DM`, `src/mesh/Router.cpp` 1350-1354,
@@ -180,6 +198,8 @@ while it lasts:
 | `Meshtastic node: ... Connection refused`, or a timeout | The address, the port, and that the radio's network is on |
 | `broker: ...` | `BROKER_URL`, `BROKER_USER`, `BROKER_PASS` |
 | `job ...: no_reply` again and again | The target does not answer your node. Sonoran gives the job to the next contributor. |
+| `job ...: error` ... `PKI_UNKNOWN_PUBKEY` | The target lacks your node's key. Your node has sent it its NodeInfo; a later job should work once that arrives. |
+| `job ...: error` ... `answered with NeighborInfo` | The target runs firmware before 2.8.0 with NeighborInfo on. Only a firmware update on the target fixes it. |
 
 ## Sharing the node with apps
 

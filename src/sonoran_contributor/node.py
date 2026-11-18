@@ -74,22 +74,56 @@ def offered_nodes(
     return out
 
 
-def reply_from_packet(packet: dict[str, Any], now: datetime) -> Reply:
+# Why a routing NAK came back, in words, for the ones a job meets.
+PKI_UNKNOWN_PUBKEY_DETAIL = (
+    "PKI_UNKNOWN_PUBKEY: the target lacks our node's public key; our node "
+    "has sent it our NodeInfo, so a later request can work"
+)
+NEIGHBORINFO_DETAIL = (
+    "the target answered with NeighborInfo, not LocalStats: firmware before "
+    "2.8.0 with the NeighborInfo module on"
+)
+
+
+def reply_from_packet(packet: dict[str, Any], now: datetime) -> Reply | None:
     """The LocalStats answer in one packet dict from the library.
 
     The library puts the decoded protobuf in `decoded.telemetry.raw`
     and the whole MeshPacket in `raw` (meshtastic/mesh_interface.py
     lines 1571 and 1637, 2.7.11). A routing packet instead is a
     negative answer, such as NO_RESPONSE: it raises `LinkError`.
+
+    MAX_RETRANSMIT is our node, or a relay on the way, giving up on the
+    request after its retries (we send it with want_ack;
+    src/mesh/NextHopRouter.cpp, v2.8.1.8e6a88d): the request never got
+    there, so None, the same outcome as a timeout.
     """
     decoded = packet.get("decoded") or {}
     telemetry = decoded.get("telemetry")
     if telemetry is None:
         routing = decoded.get("routing") or {}
         if routing:
-            raise LinkError(str(routing.get("errorReason") or "a routing answer with no error"))
+            reason = routing.get("errorReason")
+            if reason == "MAX_RETRANSMIT":
+                return None
+            if reason == "PKI_UNKNOWN_PUBKEY":
+                # The target could not decrypt our PKI request. On this
+                # NAK our node's firmware sends the target its NodeInfo
+                # by itself (ReliableRouter::sniffReceived, "PKI decrypt
+                # failure, send a NodeInfo", src/mesh/ReliableRouter.cpp
+                # 163-169, v2.8.1.8e6a88d; also in v2.7.26).
+                raise LinkError(PKI_UNKNOWN_PUBKEY_DETAIL)
+            raise LinkError(str(reason or "a routing answer with no error"))
+        portnum = decoded.get("portnum", "?")
+        if portnum == "NEIGHBORINFO_APP":
+            # Before 2.8.0 the NeighborInfo module takes every packet
+            # (wantPacket) and comes before DeviceTelemetry, and only the
+            # first module's reply is sent (MeshModule::callModules,
+            # src/mesh/MeshModule.cpp, v2.7.26.54e0d8d). 2.8.0 lets a
+            # module answer only on its own port (replyPortMatches).
+            raise LinkError(NEIGHBORINFO_DETAIL)
         # Neither LocalStats nor a routing error: say what it was.
-        raise LinkError(f"an answer without telemetry, portnum {decoded.get('portnum', '?')}")
+        raise LinkError(f"an answer without telemetry, portnum {portnum}")
     raw = telemetry.get("raw")
     if raw is None or not raw.HasField("local_stats"):
         raise LinkError("the answer held no LocalStats")
@@ -223,6 +257,15 @@ class MeshtasticLink:
                     request,
                     destinationId=target,
                     portNum=portnums_pb2.PortNum.TELEMETRY_APP,
+                    # want_ack makes a target that lacks our public key
+                    # answer PKI_UNKNOWN_PUBKEY, and our node then sends
+                    # it our NodeInfo. Without it the target drops the
+                    # request silently (that NAK is under `if
+                    # (p->want_ack)`, ReliableRouter.cpp 125-150,
+                    # v2.8.1.8e6a88d) and never learns our key. The
+                    # library hands NAKs to onResponse and keeps plain
+                    # ACKs from it (mesh_interface.py 1647-1666, 2.7.11).
+                    wantAck=True,
                     wantResponse=True,
                     hopLimit=request_hop_limit(hops, self.configured_hop_limit()),
                     onResponse=on_response,
