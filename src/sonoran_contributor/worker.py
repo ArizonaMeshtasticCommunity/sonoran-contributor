@@ -105,7 +105,8 @@ async def _jobs(
             json.dumps(result, separators=(",", ":")),
             qos=1,
         )
-        logger.info("job %s for %s: %s", job.job, job.target, result["outcome"])
+        detail = f" ({result['detail']})" if result.get("detail") else ""
+        logger.info("job %s for %s: %s%s", job.job, job.target, result["outcome"], detail)
 
 
 async def _start_proxy(config: MeshConfig, link: MeshtasticLink) -> asyncio.Server | None:

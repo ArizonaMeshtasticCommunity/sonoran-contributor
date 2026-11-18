@@ -278,6 +278,43 @@ def test_a_routing_answer_is_an_error_with_its_reason() -> None:
         reply_from_packet({"decoded": {"routing": {"errorReason": "NO_RESPONSE"}}}, NOW)
 
 
+def test_a_max_retransmit_nak_is_no_answer() -> None:
+    """Our node or a relay gave up: the same outcome as a timeout."""
+    from sonoran_contributor.node import reply_from_packet
+
+    packet = {"decoded": {"routing": {"errorReason": "MAX_RETRANSMIT"}}}
+    assert reply_from_packet(packet, NOW) is None
+
+
+def test_an_unknown_pubkey_nak_says_the_target_lacks_our_key() -> None:
+    from sonoran_contributor.node import reply_from_packet
+
+    packet = {"decoded": {"routing": {"errorReason": "PKI_UNKNOWN_PUBKEY"}}}
+    with pytest.raises(LinkError, match="lacks our node's public key"):
+        reply_from_packet(packet, NOW)
+
+
+def test_a_neighborinfo_answer_names_the_firmware_cause() -> None:
+    """Before 2.8.0 the NeighborInfo module answers in Telemetry's place."""
+    from sonoran_contributor.node import reply_from_packet
+
+    packet = {"decoded": {"portnum": "NEIGHBORINFO_APP", "neighborinfo": {}}}
+    with pytest.raises(LinkError, match=r"NeighborInfo.*before 2\.8\.0"):
+        reply_from_packet(packet, NOW)
+
+
+async def test_the_request_asks_for_an_ack_and_a_response() -> None:
+    """Without want_ack a target that lacks our key drops the request
+    silently and our node never sends it our NodeInfo."""
+    from sonoran_contributor.node import MeshtasticLink
+
+    interface = _FakeInterface(fail=False)
+    link = MeshtasticLink("node.example", 4403, None)
+    link._open = lambda: interface  # type: ignore[method-assign]
+    assert await link.request_local_stats(1, 0.01) is None
+    assert interface.sent["wantAck"] is True and interface.sent["wantResponse"] is True
+
+
 def test_the_node_adapter_sends_no_admin_message() -> None:
     """Only a LocalStats request. Never admin, never a setting (#179)."""
     source = (ROOT / "src" / "sonoran_contributor" / "node.py").read_text()
@@ -413,8 +450,10 @@ class _FakeInterface:
     def __init__(self, fail: bool) -> None:
         self.fail = fail
         self.closed = False
+        self.sent: dict[str, Any] = {}
 
     def sendData(self, *args: Any, **kwargs: Any) -> None:
+        self.sent = kwargs
         if self.fail:
             raise OSError(32, "Broken pipe")
 
